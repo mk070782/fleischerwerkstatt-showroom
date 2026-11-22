@@ -1,0 +1,4 @@
+node_modules/
+*.log
+# Sicherungen enthalten echte Kundendaten – nie einchecken
+fleischerwerkstatt-sicherung-*.json

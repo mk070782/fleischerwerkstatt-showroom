@@ -1,0 +1,17 @@
+{
+  "name": "AirKneipi Fleischerwerkstatt Showroom",
+  "short_name": "Fleischerwerkstatt",
+  "description": "Produkte, Kunden und Bestellungen der AirKneipi Fleischerwerkstatt",
+  "lang": "de",
+  "start_url": "./#/showroom",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#120f0b",
+  "theme_color": "#120f0b",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

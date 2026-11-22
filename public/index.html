@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Fleischerwerkstatt Showroom</title>
+  <meta name="description" content="AirKneipi Fleischerwerkstatt: Produkte, Kunden und Bestellungen">
+  <meta name="theme-color" content="#14110d">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Fleischerwerkstatt">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/favicon-64.png" type="image/png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="frame">
+    <header class="masthead">
+      <img class="logo" src="icons/icon-192.png" alt="" width="44" height="44">
+      <div class="identity">
+        <strong id="brand-name">AirKneipi Fleischerwerkstatt</strong>
+        <span id="brand-sub">Showroom</span>
+      </div>
+      <a class="cart-chip" href="#/bestellung" id="cart-chip" hidden></a>
+    </header>
+    <nav id="nav" aria-label="Bereiche">
+      <a href="#/showroom" data-nav="showroom"><span aria-hidden="true">◆</span>Showroom</a>
+      <a href="#/bestellung" data-nav="bestellung"><span aria-hidden="true">✚</span>Bestellung</a>
+      <a href="#/kunden" data-nav="kunden"><span aria-hidden="true">☺</span>Kunden</a>
+      <a href="#/verlauf" data-nav="verlauf"><span aria-hidden="true">☰</span>Verlauf</a>
+      <a href="#/verwaltung" data-nav="verwaltung"><span aria-hidden="true">⚙</span>Verwaltung</a>
+    </nav>
+    <main id="main"><p class="hint">Lädt …</p></main>
+  </div>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <dialog id="photo-dialog"><form method="dialog"><button class="close" aria-label="Schließen">✕</button></form><img alt=""></dialog>
+  <noscript>Diese App braucht JavaScript.</noscript>
+  <script type="module" src="app.mjs"></script>
+</body>
+</html>

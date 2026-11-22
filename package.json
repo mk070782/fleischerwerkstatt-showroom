@@ -1,0 +1,9 @@
+{
+  "name": "fleischerwerkstatt-showroom",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "AirKneipi Fleischerwerkstatt Showroom – Handy-App (PWA) ohne Fremdpakete",
+  "scripts": { "start": "node server.mjs", "test": "node --test" },
+  "engines": { "node": ">=24" }
+}
