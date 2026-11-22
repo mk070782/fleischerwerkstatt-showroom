@@ -25,7 +25,112 @@ const now = () => new Date().toISOString();
 /** Löschen merken, damit es beim Abgleich auch auf dem anderen Handy verschwindet. */
 function bury(id) {
   state.tombstones[id] = now();
+  scheduleSync();
   return db.setMeta('tombstones', state.tombstones);
+}
+
+// ---------- Automatischer Abgleich mit dem Server (Synology) ----------
+
+let syncTimer;
+let syncing = false;
+let syncAgain = false;
+
+/** Nach Änderungen kurz warten und dann abgleichen (mehrere Änderungen = ein Abgleich). */
+function scheduleSync(delay = 2500) {
+  if (!state.device.syncUrl || !state.device.syncKey) return;
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => autoSync(), delay);
+}
+
+function syncStatusText() {
+  const d = state.device;
+  if (!d.syncUrl || !d.syncKey) return 'Nicht eingerichtet.';
+  const l = d.lastAuto;
+  if (syncing) return 'Gleicht gerade ab …';
+  if (!l) return 'Noch nicht abgeglichen.';
+  const when = `${formatDate(l.at)} ${new Date(l.at).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })}`;
+  return l.ok
+    ? `✓ Zuletzt abgeglichen ${when}${l.added || l.updated || l.removed ? ` · ${l.added} neu, ${l.updated} aktualisiert, ${l.removed} gelöscht` : ' · nichts Neues'}`
+    : `⚠ Letzter Versuch ${when}: ${l.error}`;
+}
+
+function updateSyncStatus() {
+  const el = document.getElementById('sync-status');
+  if (el) el.textContent = syncStatusText();
+  document.getElementById('sync-dot')?.setAttribute('data-state', !state.device.syncUrl ? 'off' : syncing ? 'busy' : state.device.lastAuto?.ok === false ? 'error' : 'ok');
+}
+
+/** Formulare nicht unter den Fingern neu aufbauen. */
+function safeToRerender() {
+  const view = (location.hash.split('/')[1] || '').split('?')[0];
+  const a = document.activeElement;
+  return !['kunde', 'produkt', 'bestellung'].includes(view) && !(a && main.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName));
+}
+
+async function autoSync({ manual = false } = {}) {
+  const { syncUrl, syncKey } = state.device;
+  if (!syncUrl || !syncKey) { if (manual) toast('Bitte zuerst Adresse und Schlüssel eintragen.'); return; }
+  if (syncing) { syncAgain = true; return; }
+  if (!manual && navigator.onLine === false) return;
+  syncing = true;
+  updateSyncStatus();
+  try {
+    const res = await fetch(`${syncUrl.replace(/\/+$/, '')}/api/sync`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${syncKey}`, 'content-type': 'application/json' },
+      body: JSON.stringify(makeBackup(state, new Date(), state.device.prefix)),
+      signal: AbortSignal.timeout(25000),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || `Server antwortet mit ${res.status}`);
+    const { data, stats } = mergeData(state, readBackup(body));
+    const changed = stats.added || stats.updated || stats.removed || (data.settings.updatedAt || '') !== (state.settings.updatedAt || '');
+    if (changed) {
+      await db.replaceAll(data);
+      Object.assign(state, { products: data.products, customers: data.customers, orders: data.orders, settings: data.settings, tombstones: data.tombstones });
+      state.draft.items = state.draft.items.filter((i) => product(i.productId));
+      saveDraft();
+    }
+    state.device.lastAuto = { at: now(), ok: true, ...stats };
+    await db.setMeta('device', state.device);
+    syncing = false;
+    if (changed && safeToRerender()) rerender();
+    if (manual) toast(changed ? `Abgeglichen: ${stats.added} neu, ${stats.updated} aktualisiert, ${stats.removed} gelöscht` : 'Abgeglichen, alles aktuell');
+  } catch (err) {
+    const msg = err.name === 'TimeoutError' ? 'Zeitüberschreitung, Server antwortet nicht'
+      : err instanceof TypeError ? 'Server nicht erreichbar (Internet oder Adresse prüfen)' : err.message;
+    state.device.lastAuto = { at: now(), ok: false, error: msg };
+    db.setMeta('device', state.device).catch(() => {});
+    if (manual) toast(`Abgleich fehlgeschlagen: ${msg}`);
+  } finally {
+    syncing = false;
+    updateSyncStatus();
+    if (syncAgain) { syncAgain = false; scheduleSync(500); }
+  }
+}
+
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') scheduleSync(300); });
+window.addEventListener('online', () => scheduleSync(300));
+setInterval(() => { if (document.visibilityState === 'visible') autoSync(); }, 5 * 60 * 1000);
+
+function connectLink() {
+  const { syncUrl, syncKey } = state.device;
+  return `${location.origin}${location.pathname}#/verbinden?u=${encodeURIComponent(syncUrl)}&k=${encodeURIComponent(syncKey)}`;
+}
+
+function viewConnect() {
+  const q = new URLSearchParams(location.hash.split('?')[1] || '');
+  const u = q.get('u') || '';
+  let host = '';
+  try { host = new URL(u).host; } catch { /* ungültig */ }
+  if (!host || !q.get('k')) return '<p class="empty">Der Einrichtungs-Link ist unvollständig.</p><p><a href="#/verwaltung">Zur Verwaltung</a></p>';
+  return `
+    <div class="intro"><div><h1>Abgleich einrichten</h1><p>Dieses Handy mit dem Server <strong>${esc(host)}</strong> verbinden?</p></div></div>
+    <section class="panel narrow">
+      <p>Danach gleichen sich Produkte, Kunden und Bestellungen automatisch mit dem Server ab. Was schon auf diesem Handy ist, bleibt erhalten und kommt dazu.</p>
+      ${state.device.prefix ? '' : '<p class="warn">Bitte danach unter Verwaltung dein Kürzel eintragen (z. B. B).</p>'}
+      <div class="actions"><button class="primary" data-action="connect">Verbinden</button><a class="button" href="#/verwaltung">Abbrechen</a></div>
+    </section>`;
 }
 
 const main = document.getElementById('main');
@@ -344,7 +449,7 @@ function viewSync() {
   const time = (iso) => new Date(iso).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
   return `
     <form class="panel sync" id="device-form">
-      <h2>Abgleich mit dem Bruder</h2>
+      <h2>Abgleich per Datei</h2>
       <ol class="steps">
         <li>Jeder trägt einmal sein eigenes Kürzel ein (z. B. <b>M</b> und <b>B</b>), dann gibt es keine doppelten Bestellnummern.</li>
         <li><b>Abgleich senden</b> und die Datei per AirDrop, Nachrichten oder iCloud Drive an den anderen schicken.</li>
@@ -362,6 +467,19 @@ function viewSync() {
       </div>
       ${ls ? `<p class="hint">Zuletzt eingespielt: ${formatDate(ls.at)} ${time(ls.at)} von „${esc(ls.from)}“ · ${ls.added} neu, ${ls.updated} aktualisiert, ${ls.removed} gelöscht</p>` : ''}
       ${dups.length ? `<p class="warn">Doppelte Bestellnummern: ${dups.map(esc).join(', ')} (entstanden ohne Kürzel). Die Bestellungen sind trotzdem getrennt gespeichert.</p>` : ''}
+    </form>
+    <form class="panel sync" id="server-form">
+      <h2>Automatischer Abgleich (Synology)</h2>
+      <p class="hint">Mit Adresse und Schlüssel gleicht die App von selbst ab: beim Öffnen, nach jeder Änderung und alle 5 Minuten. Ohne Netz arbeitet sie ganz normal weiter und holt den Abgleich später nach.</p>
+      <label class="field">Adresse des Servers (oder Einrichtungs-Link einfügen)<input name="syncUrl" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" value="${esc(state.device.syncUrl || '')}" placeholder="https://… oder Link"></label>
+      <label class="field">Schlüssel<input name="syncKey" type="password" autocomplete="off" value="${esc(state.device.syncKey || '')}"></label>
+      <div class="actions">
+        <button type="submit">Speichern</button>
+        ${state.device.syncUrl ? `<button type="button" class="primary" data-action="sync-now">Jetzt abgleichen</button>
+        <button type="button" data-action="share-connect">Link für den Bruder</button>
+        <button type="button" class="danger" data-action="sync-disconnect">Trennen</button>` : ''}
+      </div>
+      <p class="hint" id="sync-status">${esc(syncStatusText())}</p>
     </form>`;
 }
 
@@ -405,6 +523,10 @@ function viewProduct(id) {
 let pendingPhoto; // neues Foto im Produktformular (undefined = unverändert, '' = entfernt)
 
 function route() {
+  if (location.hash.startsWith('#/verbinden')) {
+    main.innerHTML = viewConnect();
+    return;
+  }
   const [, view = 'showroom', id] = (location.hash || '#/showroom').split('/');
   const navKey = { kunde: 'kunden', auftrag: 'verlauf', produkt: 'verwaltung' }[view] || view;
   for (const a of document.querySelectorAll('#nav a')) {
@@ -461,6 +583,7 @@ async function saveOrderFromDraft() {
         customerId: c?.id || '', customerName: c?.name || name, items: d.items, pickupDate: d.pickupDate, note: d.note };
   await db.put('orders', o);
   state.orders = [...state.orders.filter((x) => x.id !== o.id), o];
+  scheduleSync();
   state.draft = emptyDraft();
   saveDraft();
   location.hash = `#/auftrag/${o.id}`;
@@ -497,6 +620,7 @@ async function markSent(id, via) {
   if (!o) return;
   o.sentAt = now();
   o.updatedAt = o.sentAt;
+  scheduleSync();
   o.sentVia = via;
   if (o.status === 'offen') o.status = 'verschickt';
   await db.put('orders', o);
@@ -616,8 +740,31 @@ document.addEventListener('click', async (ev) => {
         await download(`fleischerwerkstatt-abgleich-${state.device.prefix}-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.json`, JSON.stringify(data));
         break;
       }
+      case 'sync-now': await autoSync({ manual: true }); break;
+      case 'share-connect': {
+        const link = connectLink();
+        if (navigator.share) await navigator.share({ title: 'Fleischerwerkstatt: Abgleich einrichten', text: 'Fleischerwerkstatt-Abgleich: Link lange drücken → Kopieren, dann in der App unter Verwaltung → Automatischer Abgleich ins Adressfeld einfügen → Speichern. Enthält den Schlüssel, nicht weitergeben!', url: link });
+        else { await navigator.clipboard.writeText(link); toast('Einrichtungs-Link kopiert. Nur an deinen Bruder schicken!'); }
+        break;
+      }
+      case 'sync-disconnect':
+        if (!confirm('Automatischen Abgleich auf diesem Handy ausschalten? Die Daten bleiben auf dem Handy.')) break;
+        state.device = { ...state.device, syncUrl: '', syncKey: '', lastAuto: null };
+        await db.setMeta('device', state.device);
+        rerender();
+        break;
+      case 'connect': {
+        const q = new URLSearchParams(location.hash.split('?')[1] || '');
+        state.device = { ...state.device, syncUrl: q.get('u'), syncKey: q.get('k'), lastAuto: null };
+        await db.setMeta('device', state.device);
+        history.replaceState(null, '', `${location.pathname}#/verwaltung`); // Schlüssel aus der Adresszeile entfernen
+        route();
+        await autoSync({ manual: true });
+        break;
+      }
       case 'load-test-customers': {
         for (const c of sampleCustomers()) { c.updatedAt = now(); await db.put('customers', c); state.customers.push(c); }
+        scheduleSync();
         toast('2 Testkunden angelegt');
         rerender();
         break;
@@ -627,6 +774,7 @@ document.addEventListener('click', async (ev) => {
         for (const p of state.products) { await db.remove('products', p.id); if (!p.id.startsWith('start-')) await bury(p.id); }
         state.products = startProducts().map((p) => ({ ...p, updatedAt: now() }));
         for (const p of state.products) await db.put('products', p);
+        scheduleSync();
         rerender();
         break;
       case 'wipe':
@@ -649,6 +797,7 @@ document.addEventListener('change', async (ev) => {
       const o = order(el.dataset.id);
       o.status = el.value;
       o.updatedAt = now();
+      scheduleSync();
       await db.put('orders', o);
       toast(`Status: ${STATUS[o.status]}`);
     } else if (el.matches('[data-action="qty-input"]')) {
@@ -687,6 +836,7 @@ document.addEventListener('change', async (ev) => {
       // angefangene Bestellung behalten, gelöschte Produkte daraus entfernen
       state.draft.items = state.draft.items.filter((i) => product(i.productId));
       saveDraft();
+      scheduleSync();
       toast(`Abgleich: ${stats.added} neu, ${stats.updated} aktualisiert, ${stats.removed} gelöscht`);
       rerender();
     }
@@ -722,10 +872,12 @@ document.addEventListener('submit', async (ev) => {
       if (!id && !state.draft.customerId && state.draft.customerName && state.draft.customerName.trim().toLowerCase() === c.name.toLowerCase()) {
         state.draft.customerId = c.id;
         saveDraft();
+        scheduleSync();
         toast('Kunde angelegt und in die Bestellung übernommen');
         location.hash = '#/bestellung';
         return;
       }
+      scheduleSync();
       toast('Kunde gespeichert');
       location.hash = `#/kunde/${c.id}`;
       if (id) rerender();
@@ -739,6 +891,7 @@ document.addEventListener('submit', async (ev) => {
         size: f.size.trim(), description: f.description.trim(), active: f.active === 'on', photo: pendingPhoto === undefined ? old.photo || '' : pendingPhoto, updatedAt: now() };
       await db.put('products', p);
       state.products = [...state.products.filter((x) => x.id !== p.id), p];
+      scheduleSync();
       toast('Produkt gespeichert');
       location.hash = '#/verwaltung';
     } else if (form.id === 'settings-form') {
@@ -746,8 +899,25 @@ document.addEventListener('submit', async (ev) => {
       state.settings.countryCode = state.settings.countryCode.replace(/\D/g, '') || '49';
       state.settings.updatedAt = now();
       await db.setMeta('settings', state.settings);
+      scheduleSync();
       toast('Einstellungen gespeichert');
       rerender();
+    } else if (form.id === 'server-form') {
+      let url = String(f.syncUrl || '').trim().replace(/\/+$/, '');
+      let key = String(f.syncKey || '').trim();
+      // Eingefügter Einrichtungs-Link (iPhone: Home-Bildschirm-App kann Links nicht direkt öffnen)
+      const pasted = /#\/verbinden\?(.+)$/.exec(url);
+      if (pasted) {
+        const q = new URLSearchParams(pasted[1]);
+        url = (q.get('u') || '').replace(/\/+$/, '');
+        key = q.get('k') || '';
+      }
+      if (url && !/^https:\/\/|^http:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/.test(url)) return toast('Die Adresse muss mit https:// beginnen.');
+      if (url && key.length < 24) return toast('Der Schlüssel ist zu kurz.');
+      state.device = { ...state.device, syncUrl: url, syncKey: key, lastAuto: null };
+      await db.setMeta('device', state.device);
+      rerender();
+      if (url) await autoSync({ manual: true });
     } else if (form.id === 'device-form') {
       const prefix = String(f.prefix || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4);
       if (!prefix) return toast('Bitte ein Kürzel aus Buchstaben eingeben, z. B. M.');
@@ -795,6 +965,8 @@ async function start() {
     return;
   }
   route();
+  updateSyncStatus();
+  autoSync();
   if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
 }
 

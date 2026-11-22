@@ -44,11 +44,26 @@ Ohne Server und ohne Cloud, per Datei:
 Gut zu wissen: Legen beide denselben Kunden getrennt an, steht er zweimal in der Kartei.
 Die gemeinsamen Einstellungen (Betriebsname, Kontaktzeile) gleichen sich mit ab, das Kürzel nicht.
 
+## Automatischer Abgleich über die Synology
+
+Ein kleiner Server (`sync-server/server.mjs`, ohne Fremdpakete) läuft auf der DS220+ im Container Manager
+und hält den gemeinsamen Stand als Datei (`data/stand.json`, dazu 30 Tagessicherungen). Die Handys gleichen
+beim Öffnen, nach jeder Änderung und alle 5 Minuten ab; ohne Netz arbeiten sie normal weiter.
+Zusammengeführt wird mit derselben Logik wie beim Datei-Abgleich.
+
+- NAS-Ordner: `/volume1/docker/fleischerwerkstatt/` mit `compose.yaml` (Vorlage: `nas/compose.yaml`),
+  `.env` (nur dort: `SYNC_KEY`), `app/` (= `sync-server/server.mjs` + `public/logic.mjs`) und `data/`.
+- Von außen: DSM-Reverse-Proxy `https://michaelkneip.synology.me:8443` → `http://localhost:3191`,
+  FRITZ!Box-Portfreigabe TCP 8443 → DS220+.
+- Handy einrichten: In der App unter *Verwaltung → Automatischer Abgleich* den Einrichtungs-Link ins
+  Adressfeld einfügen → Speichern. Den Link erzeugt jedes verbundene Handy über „Link für den Bruder“.
+- Server-Update: `sync-server/server.mjs` und `public/logic.mjs` nach `app/` kopieren, Projekt neu starten.
+
 ## Am Rechner ausprobieren
 
 ```
 node server.mjs        # http://127.0.0.1:3190/
-node --test            # Tests der Rechen- und Textlogik
+node --test            # Tests der Rechen-, Text- und Abgleichlogik und des Servers
 ```
 
 ## Aufs Handy

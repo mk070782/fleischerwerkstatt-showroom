@@ -1,0 +1,24 @@
+# Abgleich-Server für den Fleischerwerkstatt Showroom (Synology Container Manager → Projekt).
+# Liegt auf der NAS in /volume1/docker/fleischerwerkstatt/ zusammen mit .env (SYNC_KEY) und app/.
+services:
+  sync:
+    image: node:24-alpine
+    container_name: fleischerwerkstatt-sync
+    restart: unless-stopped
+    working_dir: /app
+    command: ["node", "server.mjs"]
+    env_file: .env
+    environment:
+      ALLOWED_ORIGINS: https://mk070782.github.io
+      DATA_DIR: /data
+      PORT: "3191"
+    volumes:
+      - ./app:/app:ro
+      - ./data:/data
+    ports:
+      - "3191:3191"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3191/api/health"]
+      interval: 1m
+      timeout: 5s
+      retries: 3
