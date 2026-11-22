@@ -419,6 +419,7 @@ function viewAdmin() {
           <label class="field">Name des Betriebs<input name="businessName" value="${esc(s.businessName)}"></label>
           <label class="field">Untertitel<input name="subtitle" value="${esc(s.subtitle)}"></label>
           <label class="field">Kontakt unter jeder Nachricht<textarea name="contact" rows="3" placeholder="Telefon, Adresse, Öffnungszeiten">${esc(s.contact)}</textarea></label>
+          <label class="field">Zahlungshinweis (steht unter dem Gesamtbetrag)<input name="paymentNote" value="${esc(s.paymentNote)}" placeholder="z. B. Bezahlung über PayPal an …"></label>
           <label class="field">Schlusssatz<input name="greeting" value="${esc(s.greeting)}"></label>
           <label class="field">Ländervorwahl für Handynummern<input name="countryCode" inputmode="numeric" value="${esc(s.countryCode)}"></label>
           <button class="primary" type="submit">Speichern</button>

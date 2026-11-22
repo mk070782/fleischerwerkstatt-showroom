@@ -121,6 +121,10 @@ test('Bestelltext enthält Positionen, Gesamt, Abholung, Hinweis und Kontakt', (
   assert.match(text, /Hinweis: Bitte dünn schneiden/);
   assert.match(text, /Tel\. 06131 000000$/);
   assert.equal(orderMessage({ items: [] }, null).split('\n')[0], 'Hallo,');
+  // Zahlungshinweis steht direkt unter dem Gesamtbetrag
+  const paid = orderMessage(order, { name: 'Max' }, { paymentNote: 'Bezahlung über PayPal an kasse@example.com' }).split('\n');
+  assert.equal(paid[paid.indexOf('Gesamt: 41,00 €') + 1], 'Bezahlung über PayPal an kasse@example.com');
+  assert.ok(!orderMessage(order, { name: 'Max' }, { paymentNote: '  ' }).includes('PayPal'));
 });
 
 test('Links für WhatsApp, Telegram und Mail', () => {

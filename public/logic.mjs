@@ -14,6 +14,7 @@ export const DEFAULT_SETTINGS = {
   countryCode: '49',
   contact: '',
   greeting: 'Vielen Dank für Ihre Bestellung!',
+  paymentNote: '', // z. B. „Bezahlung über PayPal an …“ – steht direkt unter dem Gesamtbetrag
   orderPrefix: '',
 };
 
@@ -157,6 +158,7 @@ export function orderMessage(order, customer, settings = DEFAULT_SETTINGS) {
   }
   lines.push('');
   lines.push(`Gesamt: ${formatEuro(orderTotal(order.items))}`);
+  if (s.paymentNote?.trim()) lines.push(s.paymentNote.trim());
   if (order.pickupDate) lines.push(`Abholung: ${formatDate(order.pickupDate)}`);
   if (order.note?.trim()) lines.push(`Hinweis: ${order.note.trim()}`);
   if (s.greeting?.trim()) {
