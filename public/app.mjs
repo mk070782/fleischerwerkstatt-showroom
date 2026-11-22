@@ -3,7 +3,7 @@ import {
   STATUS, DEFAULT_SETTINGS, CATEGORIES, formatEuro, parseEuro, centsToInput, formatQty, unitLabel, stepFor,
   cleanQty, lineTotal, orderTotal, itemCount, addItem, setQty, nextOrderNumber, normalizePhone, formatDate,
   orderMessage, orderSubject, whatsappLink, telegramLink, telegramChatLink, mailLink, matches,
-  makeBackup, readBackup, newId, startProducts, sampleCustomers,
+  makeBackup, readBackup, newId, startProducts, sampleCustomers, mergeData, duplicateNumbers, migrateStartIds,
 } from './logic.mjs';
 
 const state = {
@@ -15,7 +15,18 @@ const state = {
   category: '',
   customerQuery: '',
   orderFilter: 'alle',
+  tombstones: {}, // gelöschte IDs → Zeitpunkt, damit der Abgleich nichts zurückholt
+  device: { prefix: '' }, // nur dieses Handy: Kürzel vor der Bestellnummer
+  lastSync: null,
 };
+
+const now = () => new Date().toISOString();
+
+/** Löschen merken, damit es beim Abgleich auch auf dem anderen Handy verschwindet. */
+function bury(id) {
+  state.tombstones[id] = now();
+  return db.setMeta('tombstones', state.tombstones);
+}
 
 const main = document.getElementById('main');
 
@@ -297,6 +308,7 @@ function viewAdmin() {
           <strong>${formatEuro(p.priceCents)}${p.unit === 'kg' ? '/kg' : ''}</strong></a>`).join('')}
       </section>
       <div class="stack">
+        ${viewSync()}
         <form class="panel" id="settings-form">
           <h2>Betrieb &amp; Nachricht</h2>
           <label class="field">Name des Betriebs<input name="businessName" value="${esc(s.businessName)}"></label>
@@ -323,6 +335,34 @@ function viewAdmin() {
         </section>
       </div>
     </div>`;
+}
+
+function viewSync() {
+  const prefix = state.device.prefix;
+  const ls = state.lastSync;
+  const dups = duplicateNumbers(state.orders);
+  const time = (iso) => new Date(iso).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+  return `
+    <form class="panel sync" id="device-form">
+      <h2>Abgleich mit dem Bruder</h2>
+      <ol class="steps">
+        <li>Jeder trägt einmal sein eigenes Kürzel ein (z. B. <b>M</b> und <b>B</b>), dann gibt es keine doppelten Bestellnummern.</li>
+        <li><b>Abgleich senden</b> und die Datei per AirDrop, Nachrichten oder iCloud Drive an den anderen schicken.</li>
+        <li>Der andere tippt <b>Abgleich einspielen</b> und wählt die Datei. Neues kommt dazu, bei Änderungen gewinnt die neuere, Gelöschtes bleibt gelöscht.</li>
+        <li>Danach dasselbe in die andere Richtung, dann haben beide den gleichen Stand.</li>
+      </ol>
+      <div class="two">
+        <label class="field">Kürzel dieses Handys<input name="prefix" maxlength="4" autocapitalize="characters" value="${esc(prefix)}" placeholder="z. B. M"></label>
+        <div class="field"><span>&nbsp;</span><button type="submit">Kürzel speichern</button></div>
+      </div>
+      ${prefix ? `<p class="hint">Nächste Bestellnummer: ${esc(nextOrderNumber(state.orders, new Date(), prefix))}</p>` : '<p class="warn">Noch kein Kürzel, bitte zuerst eintragen.</p>'}
+      <div class="actions">
+        <button type="button" class="primary" data-action="sync-send">Abgleich senden</button>
+        <label class="button">Abgleich einspielen<input type="file" accept="application/json,.json" id="sync-import" hidden></label>
+      </div>
+      ${ls ? `<p class="hint">Zuletzt eingespielt: ${formatDate(ls.at)} ${time(ls.at)} von „${esc(ls.from)}“ · ${ls.added} neu, ${ls.updated} aktualisiert, ${ls.removed} gelöscht</p>` : ''}
+      ${dups.length ? `<p class="warn">Doppelte Bestellnummern: ${dups.map(esc).join(', ')} (entstanden ohne Kürzel). Die Bestellungen sind trotzdem getrennt gespeichert.</p>` : ''}
+    </form>`;
 }
 
 function viewProduct(id) {
@@ -408,7 +448,7 @@ async function saveOrderFromDraft() {
   if (!c && name) {
     c = state.customers.find((x) => x.name.trim().toLowerCase() === name.toLowerCase());
     if (!c) {
-      c = { id: newId(), name, phone: '', email: '', telegram: '', address: '', notes: '' };
+      c = { id: newId(), name, phone: '', email: '', telegram: '', address: '', notes: '', updatedAt: now() };
       await db.put('customers', c);
       state.customers.push(c);
       toast(`Kunde „${name}“ angelegt`);
@@ -417,7 +457,7 @@ async function saveOrderFromDraft() {
   const existing = d.orderId && order(d.orderId);
   const o = existing
     ? { ...existing, customerId: c?.id || '', customerName: c?.name || name, items: d.items, pickupDate: d.pickupDate, note: d.note, updatedAt: new Date().toISOString() }
-    : { id: newId(), number: nextOrderNumber(state.orders, new Date(), state.settings.orderPrefix), createdAt: new Date().toISOString(), status: 'offen',
+    : { id: newId(), number: nextOrderNumber(state.orders, new Date(), state.device.prefix), createdAt: now(), updatedAt: now(), status: 'offen',
         customerId: c?.id || '', customerName: c?.name || name, items: d.items, pickupDate: d.pickupDate, note: d.note };
   await db.put('orders', o);
   state.orders = [...state.orders.filter((x) => x.id !== o.id), o];
@@ -455,7 +495,8 @@ function changeQty(id, delta) {
 async function markSent(id, via) {
   const o = order(id);
   if (!o) return;
-  o.sentAt = new Date().toISOString();
+  o.sentAt = now();
+  o.updatedAt = o.sentAt;
   o.sentVia = via;
   if (o.status === 'offen') o.status = 'verschickt';
   await db.put('orders', o);
@@ -518,6 +559,7 @@ document.addEventListener('click', async (ev) => {
       case 'order-delete':
         if (confirm(`Bestellung ${order(id).number} löschen? Das lässt sich nicht rückgängig machen.`)) {
           await db.remove('orders', id);
+          await bury(id);
           state.orders = state.orders.filter((o) => o.id !== id);
           location.hash = '#/verlauf';
         }
@@ -544,6 +586,7 @@ document.addEventListener('click', async (ev) => {
         const n = state.orders.filter((o) => o.customerId === cid).length;
         if (!confirm(`Kunde löschen?${n ? ` Die ${n} Bestellungen bleiben mit dem Namen erhalten.` : ''}`)) break;
         await db.remove('customers', cid);
+        await bury(cid);
         state.customers = state.customers.filter((c) => c.id !== cid);
         location.hash = '#/kunden';
         break;
@@ -552,6 +595,7 @@ document.addEventListener('click', async (ev) => {
         const pid = document.getElementById('product-form').dataset.id;
         if (!confirm('Produkt löschen? Alte Bestellungen behalten Name und Preis.')) break;
         await db.remove('products', pid);
+        await bury(pid);
         state.products = state.products.filter((p) => p.id !== pid);
         location.hash = '#/verwaltung';
         break;
@@ -562,27 +606,34 @@ document.addEventListener('click', async (ev) => {
         el.remove();
         break;
       case 'backup-export': {
-        const data = makeBackup(state);
+        const data = makeBackup(state, new Date(), state.device.prefix);
         await download(`fleischerwerkstatt-sicherung-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(data));
         break;
       }
+      case 'sync-send': {
+        if (!state.device.prefix) { toast('Bitte zuerst dein Kürzel speichern.'); document.querySelector('#device-form input')?.focus(); break; }
+        const data = makeBackup(state, new Date(), state.device.prefix);
+        await download(`fleischerwerkstatt-abgleich-${state.device.prefix}-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.json`, JSON.stringify(data));
+        break;
+      }
       case 'load-test-customers': {
-        for (const c of sampleCustomers()) { await db.put('customers', c); state.customers.push(c); }
+        for (const c of sampleCustomers()) { c.updatedAt = now(); await db.put('customers', c); state.customers.push(c); }
         toast('2 Testkunden angelegt');
         rerender();
         break;
       }
       case 'reset-products':
         if (!confirm('Alle Produkte durch das Startsortiment (18 Produkte, ohne Fotos) ersetzen?')) break;
-        for (const p of state.products) await db.remove('products', p.id);
-        state.products = startProducts();
+        for (const p of state.products) { await db.remove('products', p.id); if (!p.id.startsWith('start-')) await bury(p.id); }
+        state.products = startProducts().map((p) => ({ ...p, updatedAt: now() }));
         for (const p of state.products) await db.put('products', p);
         rerender();
         break;
       case 'wipe':
         if (!confirm('Wirklich ALLE Produkte, Kunden und Bestellungen auf diesem Gerät löschen? Vorher eine Sicherung exportieren!')) break;
-        await db.replaceAll({ products: [], customers: [], orders: [], settings: state.settings });
-        Object.assign(state, { products: [], customers: [], orders: [], draft: emptyDraft() });
+        await db.replaceAll({ products: [], customers: [], orders: [], settings: state.settings, tombstones: {} });
+        Object.assign(state, { products: [], customers: [], orders: [], tombstones: {}, draft: emptyDraft() });
+        saveDraft();
         rerender();
         break;
     }
@@ -597,6 +648,7 @@ document.addEventListener('change', async (ev) => {
     if (el.matches('[data-action="order-status"]')) {
       const o = order(el.dataset.id);
       o.status = el.value;
+      o.updatedAt = now();
       await db.put('orders', o);
       toast(`Status: ${STATUS[o.status]}`);
     } else if (el.matches('[data-action="qty-input"]')) {
@@ -618,8 +670,24 @@ document.addEventListener('change', async (ev) => {
       const data = readBackup(await el.files[0].text());
       if (!confirm(`Sicherung einspielen? ${data.products.length} Produkte, ${data.customers.length} Kunden, ${data.orders.length} Bestellungen. Die aktuellen Daten auf diesem Gerät werden ersetzt.`)) return;
       await db.replaceAll(data);
-      Object.assign(state, data, { draft: emptyDraft() });
+      Object.assign(state, { products: data.products, customers: data.customers, orders: data.orders, settings: data.settings, tombstones: data.tombstones, draft: emptyDraft() });
+      saveDraft();
       toast('Sicherung eingespielt');
+      rerender();
+    } else if (el.id === 'sync-import' && el.files[0]) {
+      const incoming = readBackup(await el.files[0].text());
+      el.value = '';
+      if (incoming.from && incoming.from === state.device.prefix
+        && !confirm(`Diese Datei hat dasselbe Kürzel „${incoming.from}“ wie dieses Handy, ist also vermutlich deine eigene. Trotzdem einspielen?`)) return;
+      const { data, stats } = mergeData(state, incoming);
+      await db.replaceAll(data);
+      Object.assign(state, { products: data.products, customers: data.customers, orders: data.orders, settings: data.settings, tombstones: data.tombstones });
+      state.lastSync = { at: now(), from: incoming.from || '?', exportedAt: incoming.exportedAt, ...stats };
+      await db.setMeta('lastSync', state.lastSync);
+      // angefangene Bestellung behalten, gelöschte Produkte daraus entfernen
+      state.draft.items = state.draft.items.filter((i) => product(i.productId));
+      saveDraft();
+      toast(`Abgleich: ${stats.added} neu, ${stats.updated} aktualisiert, ${stats.removed} gelöscht`);
       rerender();
     }
   } catch (err) {
@@ -646,7 +714,7 @@ document.addEventListener('submit', async (ev) => {
   try {
     if (form.id === 'customer-form') {
       const id = form.dataset.id;
-      const c = { ...(id ? customer(id) : { id: newId() }), name: f.name.trim(), phone: f.phone.trim(), email: f.email.trim(), telegram: f.telegram.trim(), address: f.address.trim(), notes: f.notes.trim() };
+      const c = { ...(id ? customer(id) : { id: newId() }), name: f.name.trim(), phone: f.phone.trim(), email: f.email.trim(), telegram: f.telegram.trim(), address: f.address.trim(), notes: f.notes.trim(), updatedAt: now() };
       if (!c.name) return toast('Bitte einen Namen eingeben.');
       await db.put('customers', c);
       state.customers = [...state.customers.filter((x) => x.id !== c.id), c];
@@ -668,7 +736,7 @@ document.addEventListener('submit', async (ev) => {
       if (priceCents === null) return toast('Preis bitte wie 7,00 eingeben.');
       const old = id ? product(id) : { id: newId(), sort: state.products.length };
       const p = { ...old, name: f.name.trim(), category: f.category.trim(), unit: f.unit === 'kg' ? 'kg' : 'Stück', priceCents,
-        size: f.size.trim(), description: f.description.trim(), active: f.active === 'on', photo: pendingPhoto === undefined ? old.photo || '' : pendingPhoto };
+        size: f.size.trim(), description: f.description.trim(), active: f.active === 'on', photo: pendingPhoto === undefined ? old.photo || '' : pendingPhoto, updatedAt: now() };
       await db.put('products', p);
       state.products = [...state.products.filter((x) => x.id !== p.id), p];
       toast('Produkt gespeichert');
@@ -676,8 +744,16 @@ document.addEventListener('submit', async (ev) => {
     } else if (form.id === 'settings-form') {
       state.settings = { ...state.settings, ...Object.fromEntries(Object.entries(f).map(([k, v]) => [k, v.trim()])) };
       state.settings.countryCode = state.settings.countryCode.replace(/\D/g, '') || '49';
+      state.settings.updatedAt = now();
       await db.setMeta('settings', state.settings);
       toast('Einstellungen gespeichert');
+      rerender();
+    } else if (form.id === 'device-form') {
+      const prefix = String(f.prefix || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4);
+      if (!prefix) return toast('Bitte ein Kürzel aus Buchstaben eingeben, z. B. M.');
+      state.device = { ...state.device, prefix };
+      await db.setMeta('device', state.device);
+      toast(`Kürzel ${prefix}: nächste Bestellung ${nextOrderNumber(state.orders, new Date(), prefix)}`);
       rerender();
     }
   } catch (err) {
@@ -689,10 +765,18 @@ document.addEventListener('submit', async (ev) => {
 
 async function start() {
   try {
-    const [products, customers, orders, settings, draft, seeded] = await Promise.all([
+    const [products, customers, orders, settings, draft, seeded, tombstones, device, lastSync] = await Promise.all([
       db.all('products'), db.all('customers'), db.all('orders'), db.getMeta('settings'), db.getMeta('draft'), db.getMeta('seeded'),
+      db.getMeta('tombstones'), db.getMeta('device'), db.getMeta('lastSync'),
     ]);
-    Object.assign(state, { products, customers, orders, settings: { ...DEFAULT_SETTINGS, ...(settings || {}) }, draft: draft || emptyDraft() });
+    Object.assign(state, { products, customers, orders, settings: { ...DEFAULT_SETTINGS, ...(settings || {}) }, draft: draft || emptyDraft(),
+      tombstones: tombstones || {}, device: { prefix: '', ...(device || {}) }, lastSync: lastSync || null });
+    for (const { oldId, product: moved } of migrateStartIds(state.products)) {
+      await db.remove('products', oldId);
+      await db.put('products', moved);
+      state.products = state.products.map((p) => (p.id === oldId ? moved : p));
+      for (const i of state.draft.items) if (i.productId === oldId) i.productId = moved.id;
+    }
     if (!seeded && !products.length) {
       state.products = startProducts();
       for (const p of state.products) await db.put('products', p);

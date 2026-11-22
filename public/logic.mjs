@@ -107,7 +107,8 @@ export function itemLine(item) {
 /** Nächste Bestellnummer im Jahr: "2026-0001", "2026-0002", ... */
 export function nextOrderNumber(orders, date = new Date(), prefix = '') {
   const year = String(date.getFullYear());
-  const head = `${prefix}${year}-`;
+  const tag = String(prefix ?? '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const head = tag ? `${tag}-${year}-` : `${year}-`;
   let max = 0;
   for (const o of orders) {
     if (typeof o.number === 'string' && o.number.startsWith(head)) {
@@ -213,11 +214,13 @@ export function fold(text) {
 
 export const BACKUP_FORMAT = 'airkneipi-fleischerwerkstatt-showroom';
 
-export function makeBackup(data, now = new Date()) {
+export function makeBackup(data, now = new Date(), from = '') {
   return {
     format: BACKUP_FORMAT,
-    version: 1,
+    version: 2,
     exportedAt: now.toISOString(),
+    from,
+    tombstones: data.tombstones || {},
     settings: data.settings || {},
     products: data.products || [],
     customers: data.customers || [],
@@ -234,14 +237,68 @@ export function readBackup(json) {
     throw new Error('Die Datei ist keine gültige Sicherung (kein JSON).');
   }
   if (!data || data.format !== BACKUP_FORMAT) throw new Error('Die Datei ist keine Sicherung dieses Showrooms.');
-  if (data.version !== 1) throw new Error(`Unbekannte Sicherungsversion ${data.version}.`);
+  if (data.version !== 1 && data.version !== 2) throw new Error(`Unbekannte Sicherungsversion ${data.version}. Bitte die App aktualisieren.`);
   for (const key of ['products', 'customers', 'orders']) {
     if (!Array.isArray(data[key])) throw new Error(`In der Sicherung fehlt die Liste „${key}“.`);
     for (const row of data[key]) {
       if (!row || typeof row.id !== 'string') throw new Error(`Ein Eintrag in „${key}“ hat keine gültige ID.`);
     }
   }
-  return { settings: { ...DEFAULT_SETTINGS, ...(data.settings || {}) }, products: data.products, customers: data.customers, orders: data.orders };
+  const tombstones = data.tombstones && typeof data.tombstones === 'object' && !Array.isArray(data.tombstones) ? data.tombstones : {};
+  return { settings: { ...DEFAULT_SETTINGS, ...(data.settings || {}) }, products: data.products, customers: data.customers, orders: data.orders,
+    tombstones, from: typeof data.from === 'string' ? data.from : '', exportedAt: data.exportedAt || '' };
+}
+
+export const SYNC_STORES = ['products', 'customers', 'orders'];
+const stamp = (row) => row?.updatedAt || row?.createdAt || '';
+
+/**
+ * Führt eine Abgleich-Datei mit den eigenen Daten zusammen.
+ * Neue Einträge kommen dazu, bei gleicher ID gewinnt die neuere Änderung (updatedAt),
+ * Gelöschtes (tombstones: id → Zeitpunkt) bleibt gelöscht, außer der Eintrag wurde danach noch geändert.
+ * Die gemeinsamen Einstellungen gewinnen ebenfalls nach updatedAt.
+ */
+export function mergeData(local, incoming) {
+  const tombstones = { ...(local.tombstones || {}) };
+  for (const [id, at] of Object.entries(incoming.tombstones || {})) {
+    if (!tombstones[id] || at > tombstones[id]) tombstones[id] = at;
+  }
+  const stats = { added: 0, updated: 0, removed: 0 };
+  const result = { tombstones };
+  for (const name of SYNC_STORES) {
+    const map = new Map((local[name] || []).map((r) => [r.id, r]));
+    const before = new Set(map.keys());
+    for (const row of incoming[name] || []) {
+      const cur = map.get(row.id);
+      if (!cur) {
+        if (tombstones[row.id] && tombstones[row.id] >= stamp(row)) continue;
+        map.set(row.id, row);
+        stats.added++;
+      } else if (stamp(row) > stamp(cur)) {
+        map.set(row.id, row);
+        stats.updated++;
+      }
+    }
+    for (const [id, at] of Object.entries(tombstones)) {
+      const cur = map.get(id);
+      if (cur && at >= stamp(cur)) {
+        map.delete(id);
+        if (before.has(id)) stats.removed++;
+      }
+    }
+    result[name] = [...map.values()];
+  }
+  const ls = local.settings || {};
+  const is = incoming.settings || {};
+  result.settings = (is.updatedAt || '') > (ls.updatedAt || '') ? { ...DEFAULT_SETTINGS, ...is } : { ...DEFAULT_SETTINGS, ...ls };
+  return { data: result, stats };
+}
+
+/** Doppelte Bestellnummern (z. B. wenn ein Kürzel fehlte). */
+export function duplicateNumbers(orders = []) {
+  const seen = new Map();
+  for (const o of orders) seen.set(o.number, (seen.get(o.number) || 0) + 1);
+  return [...seen].filter(([, n]) => n > 1).map(([num]) => num);
 }
 
 export function newId() {
@@ -273,10 +330,31 @@ export const STARTSORTIMENT = [
 
 export const CATEGORIES = ['Wurst', 'Grill', 'Frischfleisch', 'Dosen'];
 
+/** Feste IDs, damit das Startsortiment auf zwei Handys beim Abgleich nicht doppelt auftaucht. */
+export const startId = (index) => `start-${String(index + 1).padStart(2, '0')}`;
+
 export function startProducts() {
   return STARTSORTIMENT.map(([name, category, unit, price, size, description], index) => ({
-    id: newId(), name, category, unit, priceCents: parseEuro(price), size, description, photo: '', active: true, sort: index,
+    id: startId(index), name, category, unit, priceCents: parseEuro(price), size, description, photo: '', active: true, sort: index,
   }));
+}
+
+/**
+ * Ältere Installationen haben das Startsortiment mit Zufalls-IDs angelegt.
+ * Diese Produkte bekommen die festen IDs, damit der Abgleich sie zusammenlegt.
+ * Gibt die geänderten Produkte als [{ oldId, product }] zurück.
+ */
+export function migrateStartIds(products) {
+  const taken = new Set(products.map((p) => p.id));
+  const changes = [];
+  STARTSORTIMENT.forEach(([name, , unit, , size], index) => {
+    const id = startId(index);
+    if (taken.has(id)) return;
+    const hit = products.find((p) => !p.id.startsWith('start-') && !changes.some((c) => c.oldId === p.id)
+      && p.name === name && p.unit === unit && ((p.size || '') === size || (name === 'Hirschsalami' && p.size === 'Stück')));
+    if (hit) changes.push({ oldId: hit.id, product: { ...hit, id } });
+  });
+  return changes;
 }
 
 /** Testkunden zum Ausprobieren (keine echten Daten). */

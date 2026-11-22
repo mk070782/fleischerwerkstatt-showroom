@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   formatEuro, parseEuro, centsToInput, orderTotal, itemCount, addItem, setQty, nextOrderNumber,
   normalizePhone, orderMessage, whatsappLink, telegramLink, telegramChatLink, mailLink, matches,
-  makeBackup, readBackup, sampleData, BACKUP_FORMAT, itemLine, cleanQty, startProducts, STARTSORTIMENT,
+  makeBackup, readBackup, sampleData, BACKUP_FORMAT, itemLine, cleanQty, startProducts, STARTSORTIMENT, mergeData, duplicateNumbers, migrateStartIds, startId,
 } from './public/logic.mjs';
 
 test('Euro formatieren und einlesen', () => {
@@ -85,7 +85,8 @@ test('Bestellnummern laufen pro Jahr hoch', () => {
   assert.equal(nextOrderNumber([], d), '2026-0001');
   assert.equal(nextOrderNumber([{ number: '2026-0007' }, { number: '2025-0042' }, { number: '2026-0003' }], d), '2026-0008');
   assert.equal(nextOrderNumber([{ number: '2025-0042' }], d), '2026-0001');
-  assert.equal(nextOrderNumber([{ number: 'FW2026-0002' }], d, 'FW'), 'FW2026-0003');
+  assert.equal(nextOrderNumber([{ number: 'M-2026-0002' }, { number: '2026-0009' }, { number: 'B-2026-0005' }], d, 'M'), 'M-2026-0003');
+  assert.equal(nextOrderNumber([{ number: 'B-2026-0005' }], d, ' b '), 'B-2026-0006');
 });
 
 test('Telefonnummern für WhatsApp', () => {
@@ -160,10 +161,73 @@ test('Sicherung schreiben und wieder einlesen', () => {
   assert.equal(back.settings.countryCode, '49');
   assert.throws(() => readBackup('kein json'), /kein JSON/);
   assert.throws(() => readBackup('{"format":"anders"}'), /keine Sicherung dieses Showrooms/);
-  assert.throws(() => readBackup({ ...backup, version: 2 }), /Sicherungsversion/);
+  assert.throws(() => readBackup({ ...backup, version: 3 }), /Sicherungsversion/);
+  assert.equal(readBackup({ ...backup, version: 1, tombstones: undefined }).products.length, data.products.length);
   assert.throws(() => readBackup({ ...backup, orders: [{}] }), /keine gültige ID/);
 });
 
 test('Beispieldaten haben gültige Preise', () => {
   for (const p of sampleData().products) assert.ok(Number.isInteger(p.priceCents) && p.priceCents > 0, p.name);
+});
+
+const T = (h) => `2026-11-22T${String(h).padStart(2, '0')}:00:00.000Z`;
+
+test('Abgleich: Neues kommt dazu, Neueres gewinnt, nichts doppelt', () => {
+  const local = {
+    products: startProducts(),
+    customers: [{ id: 'c1', name: 'Max', updatedAt: T(8) }, { id: 'c2', name: 'Erika alt', updatedAt: T(9) }],
+    orders: [{ id: 'o1', number: 'M-2026-0001', status: 'offen', updatedAt: T(8) }],
+    settings: { businessName: 'Lokal', updatedAt: T(7) },
+  };
+  const incoming = {
+    products: startProducts(), // gleiche feste IDs → keine Dopplung
+    customers: [{ id: 'c1', name: 'Max alt', updatedAt: T(6) }, { id: 'c2', name: 'Erika neu', updatedAt: T(10) }, { id: 'c3', name: 'Neu', updatedAt: T(10) }],
+    orders: [{ id: 'o2', number: 'B-2026-0001', status: 'offen', createdAt: T(9) }, { id: 'o1', number: 'M-2026-0001', status: 'erledigt', updatedAt: T(11) }],
+    settings: { businessName: 'Bruder', contact: 'Tel', updatedAt: T(12) },
+    tombstones: {},
+  };
+  const { data, stats } = mergeData(local, incoming);
+  assert.equal(data.products.length, 18);
+  assert.deepEqual(data.customers.map((c) => c.name).sort(), ['Erika neu', 'Max', 'Neu']);
+  assert.equal(data.orders.length, 2);
+  assert.equal(data.orders.find((o) => o.id === 'o1').status, 'erledigt');
+  assert.equal(data.settings.businessName, 'Bruder');
+  assert.deepEqual(stats, { added: 2, updated: 2, removed: 0 });
+  // Zweimal einspielen ändert nichts mehr
+  assert.deepEqual(mergeData(data, incoming).stats, { added: 0, updated: 0, removed: 0 });
+});
+
+test('Abgleich: Gelöschtes bleibt gelöscht, außer es wurde danach geändert', () => {
+  const local = { products: [], customers: [{ id: 'c1', name: 'Weg', updatedAt: T(8) }, { id: 'c2', name: 'Bleibt', updatedAt: T(8) }], orders: [], settings: {}, tombstones: { o9: T(9) } };
+  const incoming = {
+    products: [], orders: [{ id: 'o9', number: '2026-0009', updatedAt: T(8) }, { id: 'o8', number: '2026-0008', updatedAt: T(12) }],
+    customers: [], settings: {}, tombstones: { c1: T(10), c2: T(7), o8: T(11) },
+  };
+  const { data, stats } = mergeData(local, incoming);
+  assert.deepEqual(data.customers.map((c) => c.id), ['c2']); // c1 gelöscht, c2 danach geändert
+  assert.deepEqual(data.orders.map((o) => o.id), ['o8']); // o9 bei mir gelöscht, o8 nach dem Löschen geändert
+  assert.equal(stats.removed, 1);
+  assert.equal(data.tombstones.c1, T(10));
+  assert.equal(data.tombstones.o9, T(9));
+  // Rückweg: mein Löschen erreicht das andere Handy
+  const back = mergeData({ ...incoming, customers: [{ id: 'c1', name: 'Weg', updatedAt: T(8) }] }, data);
+  assert.equal(back.data.customers.find((c) => c.id === 'c1'), undefined);
+});
+
+test('Doppelte Bestellnummern werden erkannt', () => {
+  assert.deepEqual(duplicateNumbers([{ number: '2026-0001' }, { number: '2026-0001' }, { number: 'M-2026-0001' }]), ['2026-0001']);
+  assert.deepEqual(duplicateNumbers([]), []);
+});
+
+test('Altes Startsortiment mit Zufalls-IDs bekommt feste IDs', () => {
+  const old = startProducts().map((p, i) => ({ ...p, id: `zufall-${i}`, size: p.name === 'Hirschsalami' ? 'Stück' : p.size }));
+  old.push({ id: 'eigenes', name: 'Wildleberwurst', unit: 'Stück', size: '' });
+  const changes = migrateStartIds(old);
+  assert.equal(changes.length, 18);
+  assert.equal(changes[0].oldId, 'zufall-0');
+  assert.equal(changes[0].product.id, startId(0));
+  // die beiden Rehgulasch (kg und Dose) werden nicht verwechselt
+  const reh = changes.filter((c) => c.product.name === 'Rehgulasch');
+  assert.deepEqual(reh.map((c) => c.product.unit + c.product.size).sort(), ['Dose 400 g'.replace(/^/, 'Stück'), 'kg'].sort());
+  assert.equal(migrateStartIds(startProducts()).length, 0);
 });

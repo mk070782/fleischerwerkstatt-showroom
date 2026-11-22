@@ -41,7 +41,7 @@ export const remove = (store, id) => run([store], 'readwrite', (tx) => tx.object
 export const getMeta = (key) => run(['meta'], 'readonly', (tx) => tx.objectStore('meta').get(key));
 export const setMeta = (key, value) => run(['meta'], 'readwrite', (tx) => tx.objectStore('meta').put(value, key));
 
-/** Ersetzt alle Daten auf einmal (Sicherung einspielen / alles löschen). */
+/** Ersetzt alle Daten auf einmal (Sicherung, Abgleich, alles löschen). Die angefangene Bestellung bleibt. */
 export function replaceAll(data) {
   return run([...STORES, 'meta'], 'readwrite', (tx) => {
     for (const name of STORES) {
@@ -51,7 +51,7 @@ export function replaceAll(data) {
     }
     const meta = tx.objectStore('meta');
     meta.put(data.settings || {}, 'settings');
-    meta.delete('draft');
+    meta.put(data.tombstones || {}, 'tombstones');
   });
 }
 

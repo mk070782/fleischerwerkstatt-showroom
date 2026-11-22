@@ -29,6 +29,21 @@ Alles liegt **nur auf dem Gerät** (IndexedDB), kein Server, keine Konten.
 Darum regelmäßig unter *Verwaltung → Sicherung exportieren* eine Datei speichern (iCloud Drive, Mail an sich selbst).
 Mit *Sicherung einspielen* kommt alles auf ein neues Handy. Sicherungsdateien enthalten Kundendaten – nicht weitergeben.
 
+## Abgleich zwischen zwei Handys (z. B. mit dem Bruder)
+
+Ohne Server und ohne Cloud, per Datei:
+
+1. Jeder trägt unter *Verwaltung → Abgleich* einmal sein **Kürzel** ein (z. B. `M` und `B`).
+   Bestellnummern heißen dann `M-2026-0001` bzw. `B-2026-0001` und kommen sich nie in die Quere.
+2. **Abgleich senden** → Datei per AirDrop, Nachrichten oder iCloud Drive an den anderen.
+3. Der andere: **Abgleich einspielen** → Datei wählen. Das *führt zusammen*, es ersetzt nichts:
+   Neues kommt dazu, bei derselben Bestellung/demselben Kunden gewinnt die neuere Änderung,
+   Gelöschtes bleibt gelöscht (außer es wurde danach auf dem anderen Handy noch geändert).
+4. Dasselbe zurück, dann haben beide den gleichen Stand. Zweimal einspielen schadet nicht.
+
+Gut zu wissen: Legen beide denselben Kunden getrennt an, steht er zweimal in der Kartei.
+Die gemeinsamen Einstellungen (Betriebsname, Kontaktzeile) gleichen sich mit ab, das Kürzel nicht.
+
 ## Am Rechner ausprobieren
 
 ```
