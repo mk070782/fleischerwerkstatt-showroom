@@ -70,6 +70,7 @@ test('Startsortiment entspricht den Plakaten', () => {
   const find = (name, size = '') => products.find((p) => p.name === name && p.size === size);
   assert.equal(find('Hirschsalami').priceCents, 1000);
   assert.equal(find('Chilli con Carne', 'Dose 800 g').priceCents, 1400);
+  assert.equal(find('Wildschwein-Knacker', '5 Stück').priceCents, 800); // Preis seit 22.11.2026
   assert.equal(find('Wildhackfleisch').unit, 'kg');
   assert.equal(find('Marinierte Wildschwein-Rückensteaks').priceCents, 3000);
   assert.equal(find('Rehgulasch').priceCents, 1800);

@@ -311,7 +311,7 @@ export function newId() {
 /** Startsortiment nach den Produktplakaten (Stand 22.11.2026), Fotos = die Plakate. */
 export const STARTSORTIMENT = [
   ['Hirschsalami', 'Wurst', 'Stück', '10', '', 'Am Stück'],
-  ['Wildschwein-Knacker', 'Wurst', 'Stück', '7', '4 Stück', ''],
+  ['Wildschwein-Knacker', 'Wurst', 'Stück', '8', '5 Stück', ''],
   ['Wildschwein-Krakauer', 'Wurst', 'Stück', '7', '4 Stück', ''],
   ['Wildschwein-Käsesiedewurst', 'Wurst', 'Stück', '8', '4 Stück', ''],
   ['Wildschwein-Bratwurst', 'Grill', 'Stück', '7', '4 Stück', ''],
