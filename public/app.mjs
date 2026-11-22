@@ -3,7 +3,7 @@ import {
   STATUS, DEFAULT_SETTINGS, CATEGORIES, formatEuro, parseEuro, centsToInput, formatQty, unitLabel, stepFor,
   cleanQty, lineTotal, orderTotal, itemCount, addItem, setQty, nextOrderNumber, normalizePhone, formatDate,
   orderMessage, orderSubject, whatsappLink, telegramLink, telegramChatLink, mailLink, matches,
-  makeBackup, readBackup, newId, startProducts, sampleCustomers, mergeData, duplicateNumbers, migrateStartIds,
+  makeBackup, readBackup, newId, startProducts, sampleCustomers, mergeData, duplicateNumbers, migrateStartIds, fillStartPhotos,
 } from './logic.mjs';
 
 const state = {
@@ -623,7 +623,7 @@ document.addEventListener('click', async (ev) => {
         break;
       }
       case 'reset-products':
-        if (!confirm('Alle Produkte durch das Startsortiment (18 Produkte, ohne Fotos) ersetzen?')) break;
+        if (!confirm('Alle Produkte durch das Startsortiment (18 Produkte mit Plakatfotos) ersetzen?')) break;
         for (const p of state.products) { await db.remove('products', p.id); if (!p.id.startsWith('start-')) await bury(p.id); }
         state.products = startProducts().map((p) => ({ ...p, updatedAt: now() }));
         for (const p of state.products) await db.put('products', p);
@@ -776,6 +776,13 @@ async function start() {
       await db.put('products', moved);
       state.products = state.products.map((p) => (p.id === oldId ? moved : p));
       for (const i of state.draft.items) if (i.productId === oldId) i.productId = moved.id;
+    }
+    if (!(await db.getMeta('photosV1'))) {
+      for (const p of fillStartPhotos(state.products)) {
+        await db.put('products', p);
+        state.products = state.products.map((x) => (x.id === p.id ? p : x));
+      }
+      await db.setMeta('photosV1', true);
     }
     if (!seeded && !products.length) {
       state.products = startProducts();

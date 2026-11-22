@@ -306,7 +306,7 @@ export function newId() {
   return `id-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-/** Startsortiment nach den Produktplakaten (Stand 22.11.2026). Bilder legt man in der App an. */
+/** Startsortiment nach den Produktplakaten (Stand 22.11.2026), Fotos = die Plakate. */
 export const STARTSORTIMENT = [
   ['Hirschsalami', 'Wurst', 'Stück', '10', '', 'Am Stück'],
   ['Wildschwein-Knacker', 'Wurst', 'Stück', '7', '4 Stück', ''],
@@ -333,9 +333,12 @@ export const CATEGORIES = ['Wurst', 'Grill', 'Frischfleisch', 'Dosen'];
 /** Feste IDs, damit das Startsortiment auf zwei Handys beim Abgleich nicht doppelt auftaucht. */
 export const startId = (index) => `start-${String(index + 1).padStart(2, '0')}`;
 
+/** Plakatfoto zum Startsortiment (liegt in public/produkte/). */
+export const startPhoto = (index) => `produkte/${startId(index)}.jpg`;
+
 export function startProducts() {
   return STARTSORTIMENT.map(([name, category, unit, price, size, description], index) => ({
-    id: startId(index), name, category, unit, priceCents: parseEuro(price), size, description, photo: '', active: true, sort: index,
+    id: startId(index), name, category, unit, priceCents: parseEuro(price), size, description, photo: startPhoto(index), active: true, sort: index,
   }));
 }
 
@@ -355,6 +358,16 @@ export function migrateStartIds(products) {
     if (hit) changes.push({ oldId: hit.id, product: { ...hit, id } });
   });
   return changes;
+}
+
+/**
+ * Ältere Installationen haben das Startsortiment ohne Fotos. Ergänzt das Plakatfoto,
+ * wo noch kein eigenes Foto gesetzt ist. Gibt nur die geänderten Produkte zurück.
+ */
+export function fillStartPhotos(products) {
+  return products
+    .filter((p) => !p.photo && /^start-(\d\d)$/.test(p.id) && Number(p.id.slice(6)) <= STARTSORTIMENT.length)
+    .map((p) => ({ ...p, photo: startPhoto(Number(p.id.slice(6)) - 1) }));
 }
 
 /** Testkunden zum Ausprobieren (keine echten Daten). */

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   formatEuro, parseEuro, centsToInput, orderTotal, itemCount, addItem, setQty, nextOrderNumber,
   normalizePhone, orderMessage, whatsappLink, telegramLink, telegramChatLink, mailLink, matches,
-  makeBackup, readBackup, sampleData, BACKUP_FORMAT, itemLine, cleanQty, startProducts, STARTSORTIMENT, mergeData, duplicateNumbers, migrateStartIds, startId,
+  makeBackup, readBackup, sampleData, BACKUP_FORMAT, itemLine, cleanQty, startProducts, STARTSORTIMENT, mergeData, duplicateNumbers, migrateStartIds, startId, fillStartPhotos,
 } from './public/logic.mjs';
 
 test('Euro formatieren und einlesen', () => {
@@ -230,4 +230,20 @@ test('Altes Startsortiment mit Zufalls-IDs bekommt feste IDs', () => {
   const reh = changes.filter((c) => c.product.name === 'Rehgulasch');
   assert.deepEqual(reh.map((c) => c.product.unit + c.product.size).sort(), ['Dose 400 g'.replace(/^/, 'Stück'), 'kg'].sort());
   assert.equal(migrateStartIds(startProducts()).length, 0);
+});
+
+test('Plakatfotos: jedes Startprodukt hat sein Bild, eigene Fotos bleiben', async () => {
+  const { existsSync } = await import('node:fs');
+  const products = startProducts();
+  for (const p of products) {
+    assert.equal(p.photo, `produkte/${p.id}.jpg`);
+    assert.ok(existsSync(new URL(`./public/${p.photo}`, import.meta.url)), p.photo);
+  }
+  const old = products.map((p) => ({ ...p, photo: '' }));
+  old[0].photo = 'data:image/jpeg;base64,EIGENES';
+  old.push({ id: 'eigenes', name: 'X', photo: '' });
+  const filled = fillStartPhotos(old);
+  assert.equal(filled.length, 17);
+  assert.ok(filled.every((p) => p.photo === `produkte/${p.id}.jpg`));
+  assert.ok(!filled.some((p) => p.id === 'start-01' || p.id === 'eigenes'));
 });

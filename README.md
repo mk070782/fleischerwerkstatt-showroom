@@ -61,7 +61,8 @@ Bei jeder neuen Version `VERSION` in `public/sw.js` hochzählen.
 
 ## Startsortiment
 
-18 Produkte nach den Plakaten vom 22.11.2026 (`STARTSORTIMENT` in `public/logic.mjs`), ohne Fotos.
+18 Produkte nach den Plakaten vom 22.11.2026 (`STARTSORTIMENT` in `public/logic.mjs`), Fotos = die Plakate
+in `public/produkte/start-01.jpg` … `start-18.jpg` (auf 900 px verkleinert). Eigene Fotos in der App haben Vorrang.
 Fünf werden pro kg abgerechnet (Wildhack, Wildschwein-, Hirsch-, Rehgulasch, marinierte Rückensteaks).
 
 ## Veröffentlichung
