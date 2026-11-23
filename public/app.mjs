@@ -8,7 +8,7 @@ import {
 } from './logic.mjs';
 
 /** Muss zu public/version.json passen (und VERSION in sw.js). */
-export const APP_VERSION = 10;
+export const APP_VERSION = 11;
 
 const state = {
   products: [],
@@ -88,7 +88,9 @@ async function autoSync({ manual = false } = {}) {
     });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.error || `Server antwortet mit ${res.status}`);
+    if (body.shop?.token) state.device.shopToken = body.shop.token;
     const { data, stats } = mergeData(state, readBackup(body));
+    const fresh = data.orders.filter((o) => o.source === 'link' && !o.seen && !state.orders.some((x) => x.id === o.id));
     const changed = stats.added || stats.updated || stats.removed || (data.settings.updatedAt || '') !== (state.settings.updatedAt || '');
     if (changed) {
       await db.replaceAll(data);
@@ -100,7 +102,9 @@ async function autoSync({ manual = false } = {}) {
     await db.setMeta('device', state.device);
     syncing = false;
     if (changed && safeToRerender()) rerender();
-    if (manual) toast(changed ? `Abgeglichen: ${stats.added} neu, ${stats.updated} aktualisiert, ${stats.removed} gelöscht` : 'Abgeglichen, alles aktuell');
+    updateNavBadge();
+    if (fresh.length) toast(fresh.length === 1 ? `Neue Bestellung über den Link: ${fresh[0].customerName}` : `${fresh.length} neue Bestellungen über den Link`);
+    if (manual && !fresh.length) toast(changed ? `Abgeglichen: ${stats.added} neu, ${stats.updated} aktualisiert, ${stats.removed} gelöscht` : 'Abgeglichen, alles aktuell');
   } catch (err) {
     const msg = err.name === 'TimeoutError' ? 'Zeitüberschreitung, Server antwortet nicht'
       : err instanceof TypeError ? 'Server nicht erreichbar (Internet oder Adresse prüfen)' : err.message;
@@ -117,6 +121,32 @@ async function autoSync({ manual = false } = {}) {
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') scheduleSync(300); });
 window.addEventListener('online', () => scheduleSync(300));
 setInterval(() => { if (document.visibilityState === 'visible') autoSync(); }, 5 * 60 * 1000);
+
+/** Bestell-Link für Freunde: Server-Adresse und Bestell-Schlüssel stehen im #-Teil (wird nicht an GitHub übertragen). */
+function shopLink() {
+  const { syncUrl, shopToken } = state.device;
+  if (!syncUrl || !shopToken) return '';
+  return `${location.origin}${location.pathname.replace(/[^/]*$/, '')}bestellen.html#s=${encodeURIComponent(syncUrl)}&t=${encodeURIComponent(shopToken)}`;
+}
+
+const unseenLinkOrders = () => state.orders.filter((o) => o.source === 'link' && !o.seen).length;
+
+function updateNavBadge() {
+  const a = document.querySelector('#nav a[data-nav="verlauf"]');
+  const n = unseenLinkOrders();
+  if (!a) return;
+  if (n) a.setAttribute('data-badge', n); else a.removeAttribute('data-badge');
+}
+
+async function markSeen(id) {
+  const o = order(id);
+  if (!o || o.source !== 'link' || o.seen) return;
+  o.seen = true;
+  o.updatedAt = now();
+  await db.put('orders', o);
+  scheduleSync();
+  updateNavBadge();
+}
 
 function connectLink() {
   const { syncUrl, syncKey } = state.device;
@@ -347,7 +377,7 @@ function orderRow(o) {
   return `<a class="row link" href="#/auftrag/${o.id}">
     <div><strong>${esc(o.number)} · ${esc(c?.name || o.customerName || 'ohne Kunde')}</strong>
     <p class="hint">${formatDate(o.createdAt)}${o.pickupDate ? ` · Abholung ${formatDate(o.pickupDate)}` : ''}</p></div>
-    <div class="row-end"><span class="badges"><span class="status s-${o.status}">${STATUS[o.status] || o.status}</span>${o.status === 'storniert' ? '' : o.paid ? '<span class="pay pay-yes">bezahlt</span>' : '<span class="pay pay-no">unbezahlt</span>'}</span><strong>${formatEuro(orderTotal(o.items))}</strong></div>
+    <div class="row-end"><span class="badges">${o.source === 'link' && !o.seen ? '<span class="pay new-badge">NEU</span>' : ''}${o.source === 'link' ? '<span class="pay link-badge">über Link</span>' : ''}<span class="status s-${o.status}">${STATUS[o.status] || o.status}</span>${o.status === 'storniert' ? '' : o.paid ? '<span class="pay pay-yes">bezahlt</span>' : '<span class="pay pay-no">unbezahlt</span>'}</span><strong>${formatEuro(orderTotal(o.items))}</strong></div>
   </a>`;
 }
 
@@ -358,7 +388,7 @@ function viewOrders() {
   const open = state.orders.filter(unpaid);
   return `
     <div class="intro"><div><h1>Verlauf</h1><p>${state.orders.length} Bestellungen · unbezahlt ${formatEuro(open.reduce((s, o) => s + orderTotal(o.items), 0))}</p></div>
-      <div class="actions tight"><a class="button" href="#/umsatz">Umsatz</a><a class="button primary" href="#/bestellung">+ Bestellung</a></div></div>
+      <div class="actions tight"><a class="button" href="#/umsatz">Umsatz</a>${shopLink() ? '<button data-action="share-shop">Bestell-Link</button>' : ''}<a class="button primary" href="#/bestellung">+ Bestellung</a></div></div>
     <div class="chips" role="group" aria-label="Status">
       ${['alle', 'unbezahlt', ...Object.keys(STATUS)].map((k) => `<button data-action="order-filter" data-f="${k}" aria-pressed="${f === k}">${k === 'alle' ? 'Alle' : k === 'unbezahlt' ? `Unbezahlt (${open.length})` : STATUS[k]}</button>`).join('')}
     </div>
@@ -375,7 +405,7 @@ function viewOrder(id) {
   return `
     <p><a href="#/verlauf">← Verlauf</a></p>
     <div class="intro"><div><h1>Bestellung ${esc(o.number)}</h1>
-      <p>${formatDate(o.createdAt)} · ${c ? `<a href="#/kunde/${c.id}">${esc(c.name)}</a>` : esc(o.customerName || 'ohne Kunde')}</p></div>
+      <p>${formatDate(o.createdAt)} · ${c ? `<a href="#/kunde/${c.id}">${esc(c.name)}</a>` : esc(o.customerName || 'ohne Kunde')}${o.source === 'link' ? ' · <span class="pay link-badge">über den Bestell-Link</span>' : ''}</p></div>
       <label class="field inline">Status
         <select data-action="order-status" data-id="${o.id}">${Object.entries(STATUS).map(([k, v]) => `<option value="${k}" ${o.status === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
       </label></div>
@@ -483,7 +513,19 @@ function adminSync() {
   const dups = duplicateNumbers(state.orders);
   const time = (iso) => new Date(iso).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
   const connected = Boolean(state.device.syncUrl);
+  const link = shopLink();
+  const open = state.settings.shopOpen !== false;
   return `
+    ${connected ? `<section class="panel shop-panel">
+      <h2>Bestell-Link für Freunde</h2>
+      ${link ? `<p class="hint">Wer diesen Link hat, kann dein Sortiment sehen und bestellen – aber nie deine Kunden oder Bestellungen. Die Bestellungen kommen hier mit „NEU“ an.</p>
+      <p class="shop-state ${open ? 'is-open' : 'is-paused'}">${open ? '● Bestellungen werden angenommen' : '❚❚ Bestellungen sind pausiert'}</p>
+      <div class="actions">
+        <button type="button" class="primary" data-action="share-shop">Bestell-Link teilen</button>
+        <a class="button" href="${esc(link)}" target="_blank" rel="noopener">Ansehen</a>
+        <button type="button" data-action="toggle-shop">${open ? 'Pausieren' : 'Wieder annehmen'}</button>
+      </div>` : '<p class="hint">Der Bestell-Link kommt mit dem nächsten Abgleich. Tipp oben rechts auf ⟳.</p>'}
+    </section>` : ''}
     <form class="panel sync" id="server-form">
       <h2>Automatischer Abgleich (Synology)</h2>
       <p class="hint" id="sync-status">${esc(syncStatusText())}</p>
@@ -639,6 +681,8 @@ function route() {
     produkt: () => viewProduct(id),
   }[view];
   main.innerHTML = html ? html() : viewShowroom();
+  if (view === 'auftrag') markSeen(id);
+  updateNavBadge();
   document.getElementById('brand-name').textContent = state.settings.businessName;
   document.getElementById('brand-sub').textContent = state.settings.subtitle;
   document.title = `${state.settings.subtitle || 'Showroom'} · ${state.settings.businessName}`;
@@ -786,6 +830,21 @@ document.addEventListener('click', async (ev) => {
         break;
       }
       case 'app-update': await updateApp(); break;
+      case 'share-shop': {
+        const link = shopLink();
+        if (!link) { toast('Der Bestell-Link kommt mit dem nächsten Abgleich.'); break; }
+        const text = `Hier kannst du bei ${state.settings.businessName} bestellen:`;
+        if (navigator.share) await navigator.share({ title: `Bestellen bei ${state.settings.businessName}`, text, url: link });
+        else { await navigator.clipboard.writeText(`${text} ${link}`); toast('Bestell-Link kopiert'); }
+        break;
+      }
+      case 'toggle-shop':
+        state.settings = { ...state.settings, shopOpen: state.settings.shopOpen === false, updatedAt: now() };
+        await db.setMeta('settings', state.settings);
+        scheduleSync(300);
+        toast(state.settings.shopOpen ? 'Bestellungen über den Link werden wieder angenommen' : 'Bestell-Link pausiert');
+        rerender();
+        break;
       case 'check-update':
         lastUpdateCheck = 0;
         await checkForUpdate();

@@ -229,3 +229,33 @@ button.sales-row:hover strong, .sales-row.current strong { color: var(--gold); }
 details.panel > summary { cursor: pointer; color: var(--ink); }
 details.panel > summary small { color: var(--muted); }
 details.panel[open] > summary { margin-bottom: 6px; }
+
+/* Bestell-Link in der App */
+.link-badge { background: #1f3a4a; color: #9fd3f0; }
+.new-badge { background: var(--gold); color: var(--gold-ink); }
+nav a[data-badge] { position: relative; }
+nav a[data-badge]::after { content: attr(data-badge); position: absolute; top: 4px; left: calc(50% + 8px); min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--gold); color: var(--gold-ink); font: 700 11px/18px system-ui, sans-serif; text-align: center; }
+@media (min-width: 900px) { nav a[data-badge]::after { position: static; margin-left: 4px; } }
+.shop-panel { border-color: var(--gold); }
+.shop-state { margin-top: 8px; font-weight: 700; }
+.shop-state.is-open { color: var(--green); }
+.shop-state.is-paused { color: #f0b3a6; }
+
+/* Bestellseite für Freunde */
+.shop-page .frame { padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
+#shop-bar { position: fixed; z-index: 10; left: 0; right: 0; bottom: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); background: #0d0b08f2; border-top: 1px solid var(--gold); backdrop-filter: blur(8px); }
+#shop-bar[hidden] { display: none; }
+#shop-bar div { display: grid; }
+#shop-bar strong { font-family: var(--display); font-size: 24px; color: var(--gold); }
+#shop-bar small { color: var(--muted); }
+.shop-page #toast { bottom: calc(100px + env(safe-area-inset-bottom)); }
+.card.chosen { border-color: var(--gold); }
+.shop-stepper { margin-top: 8px; justify-content: space-between; }
+.shop-stepper .qty { font-weight: 700; font-size: 17px; }
+.linkish { min-height: 0; padding: 0; border: 0; background: none; color: var(--gold); font-weight: 600; }
+.hp { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+.thanks .eyebrow { color: var(--gold); text-transform: uppercase; letter-spacing: .14em; font-size: 13px; }
+.thanks h1 { margin: 6px 0 10px; }
+.thanks .plain { margin: 14px 0 0; padding-left: 18px; display: grid; gap: 4px; }
+.thanks .paybox { background: #22391f; color: #d9f0d6; display: grid; gap: 10px; }
+.shop-msg h1 { margin-bottom: 10px; }

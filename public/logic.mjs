@@ -19,6 +19,7 @@ export const DEFAULT_SETTINGS = {
   paypalMode: 'freunde', // 'freunde' (Freunde & Familie) oder 'waren' (Waren und Dienstleistungen)
   orderPrefix: '',
   tone: 'sie', // Ansprache in der Nachricht: 'sie' oder 'du'
+  shopOpen: true, // Bestellungen über den Bestell-Link annehmen
 };
 
 const euro = new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' });
@@ -482,4 +483,77 @@ export function sampleCustomers() {
 
 export function sampleData() {
   return { products: startProducts(), customers: sampleCustomers(), orders: [] };
+}
+
+// ---------- Bestell-Link: Freunde bestellen selbst ----------
+
+export const SHOP_PREFIX = 'WEB';
+
+const sortForShop = (a, b) => (CATEGORIES.indexOf(a.category) + 1 || 99) - (CATEGORIES.indexOf(b.category) + 1 || 99)
+  || (a.sort ?? 999) - (b.sort ?? 999) || String(a.name).localeCompare(String(b.name), 'de');
+
+/** Öffentlicher Katalog für die Bestellseite: nur sichtbare Produkte und nur die nötigen Felder – nie Kunden oder Bestellungen. */
+export function shopCatalog(state) {
+  const s = { ...DEFAULT_SETTINGS, ...(state.settings || {}) };
+  const products = (state.products || []).filter((p) => p.active !== false).sort(sortForShop)
+    .map((p) => ({ id: p.id, name: p.name, category: p.category || '', unit: p.unit === 'kg' ? 'kg' : 'Stück',
+      priceCents: p.priceCents, size: p.size || '', description: p.description || '', photo: p.photo || '' }));
+  return { businessName: s.businessName, subtitle: s.subtitle, open: s.shopOpen !== false, paymentNote: s.paymentNote,
+    paypal: s.paypal, paypalMode: s.paypalMode, contact: s.contact, products };
+}
+
+const clip = (v, max) => String(v ?? '').trim().slice(0, max);
+function shopError(message, status = 400) { return Object.assign(new Error(message), { status }); }
+
+/**
+ * Prüft eine Bestellung von der Bestellseite und baut daraus die Bestellung (und ggf. einen neuen Kunden).
+ * Preise und Namen kommen immer aus dem eigenen Sortiment, nie vom Absender.
+ * Ein bekannter Kunde wird an der Telefonnummer erkannt. Fehler haben eine verständliche Meldung (err.status 400/403).
+ */
+export function buildShopOrder(state, input, now = new Date()) {
+  const s = { ...DEFAULT_SETTINGS, ...(state.settings || {}) };
+  if (s.shopOpen === false) throw shopError('Bestellungen sind gerade pausiert. Bitte später noch einmal versuchen.', 403);
+  const name = clip(input?.name, 80);
+  const phone = clip(input?.phone, 40);
+  const email = clip(input?.email, 120);
+  const note = clip(input?.note, 500);
+  const pickupDate = /^\d{4}-\d{2}-\d{2}$/.test(String(input?.pickupDate || '')) ? input.pickupDate : '';
+  if (name.length < 2) throw shopError('Bitte deinen Namen angeben.');
+  const phoneKey = normalizePhone(phone, s.countryCode);
+  if (phoneKey.length < 8) throw shopError('Bitte deine Handynummer angeben, damit wir uns melden können.');
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw shopError('Die E-Mail-Adresse sieht nicht richtig aus.');
+  if (pickupDate && pickupDate < dayKey(now.toISOString())) throw shopError('Der Abholtag liegt in der Vergangenheit.');
+  const wanted = Array.isArray(input?.items) ? input.items.slice(0, 60) : [];
+  const qtyById = new Map();
+  for (const w of wanted) {
+    const id = String(w?.productId ?? '');
+    qtyById.set(id, (qtyById.get(id) || 0) + (Number(String(w?.qty ?? '').replace(',', '.')) || 0));
+  }
+  const items = [];
+  for (const [id, raw] of qtyById) {
+    const p = (state.products || []).find((x) => x.id === id && x.active !== false);
+    if (!p) throw shopError('Ein Produkt gibt es leider nicht mehr. Bitte die Seite neu laden.');
+    const unit = p.unit === 'kg' ? 'kg' : 'Stück';
+    const qty = cleanQty(raw, unit);
+    if (!qty) continue;
+    if (qty > (unit === 'kg' ? 20 : 50)) throw shopError(`Bei „${p.name}“ ist die Menge zu groß. Für größere Mengen bitte direkt melden.`);
+    items.push({ productId: p.id, name: p.name, size: p.size || '', priceCents: p.priceCents, unit, qty });
+  }
+  if (!items.length) throw shopError('Bitte mindestens ein Produkt auswählen.');
+  const at = now.toISOString();
+  let customer = (state.customers || []).find((c) => c.phone && normalizePhone(c.phone, s.countryCode) === phoneKey);
+  let newCustomer = null;
+  if (!customer) {
+    customer = newCustomer = { id: newId(), name, phone, email, telegram: '', address: '', notes: 'Kam über den Bestell-Link', salutation: '', updatedAt: at };
+  }
+  const extra = [];
+  if (!newCustomer && fold(name) !== fold(customer.name)) extra.push(`Bestellt als: ${name}`);
+  if (!newCustomer && email && email !== customer.email) extra.push(`E-Mail: ${email}`);
+  const order = {
+    id: newId(), number: nextOrderNumber(state.orders || [], now, SHOP_PREFIX), createdAt: at, updatedAt: at,
+    status: 'offen', source: 'link', seen: false, paid: false,
+    customerId: customer.id, customerName: customer.name, items, pickupDate,
+    note: [note, ...extra].filter(Boolean).join(' · '),
+  };
+  return { order, newCustomer };
 }

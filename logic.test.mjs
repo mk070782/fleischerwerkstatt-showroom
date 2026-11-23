@@ -4,7 +4,7 @@ import {
   formatEuro, parseEuro, centsToInput, orderTotal, itemCount, addItem, setQty, nextOrderNumber,
   normalizePhone, orderMessage, whatsappLink, telegramLink, telegramChatLink, mailLink, matches,
   makeBackup, readBackup, sampleData, BACKUP_FORMAT, itemLine, cleanQty, startProducts, STARTSORTIMENT, mergeData, duplicateNumbers, migrateStartIds, startId, fillStartPhotos,
-  paypalLink, salesSummary, dayKey, firstName, orderSubject,
+  paypalLink, salesSummary, dayKey, firstName, orderSubject, shopCatalog, buildShopOrder,
 } from './public/logic.mjs';
 
 test('Euro formatieren und einlesen', () => {
@@ -337,4 +337,59 @@ test('PayPal „Freunde & Familie“: kein Waren-Link, klarer Hinweis, PayPal.me
   assert.equal(paypalLink('kasse@example.com', 800, '', 'freunde'), '');
   assert.equal(paypalLink('MaxMuster', 800, '', 'freunde'), 'https://paypal.me/MaxMuster/8.00EUR');
   assert.ok(!orderMessage(o, { name: 'Max' }, {}).includes('Freunde'), 'ohne PayPal-Angabe kein Hinweis');
+});
+
+test('Bestell-Link: Katalog zeigt nur Sichtbares und keine internen Daten', () => {
+  const products = startProducts();
+  products[0].active = false;
+  const cat = shopCatalog({ products, customers: [{ id: 'c', name: 'Geheim' }], orders: [{ id: 'o' }], settings: { paypal: 'kasse@example.com' } });
+  assert.equal(cat.products.length, 17);
+  assert.ok(!cat.products.some((p) => p.id === products[0].id));
+  assert.deepEqual(Object.keys(cat.products[0]).sort(), ['category', 'description', 'id', 'name', 'photo', 'priceCents', 'size', 'unit']);
+  assert.ok(!JSON.stringify(cat).includes('Geheim'));
+  assert.equal(cat.open, true);
+  assert.equal(cat.paypalMode, 'freunde');
+});
+
+test('Bestell-Link: Bestellung prüfen, Preise vom Sortiment, Kunde per Telefon erkennen', () => {
+  const now = new Date('2026-11-23T10:00:00Z');
+  const state = { products: startProducts(), customers: [{ id: 'mona', name: 'Mona Von Gemünden', phone: '0171 1234567' }], orders: [{ number: 'WEB-2026-0001' }], settings: {} };
+  const knacker = state.products.find((p) => p.name === 'Wildschwein-Knacker');
+  const hack = state.products.find((p) => p.name === 'Wildschwein-Hackfleisch');
+  const { order, newCustomer } = buildShopOrder(state, {
+    name: 'Mona', phone: '+49 171 1234567', note: 'Bitte vakuumieren', pickupDate: '2026-11-28',
+    items: [{ productId: knacker.id, qty: 1, priceCents: 1 }, { productId: knacker.id, qty: 1 }, { productId: hack.id, qty: '1,5' }],
+  }, now);
+  assert.equal(newCustomer, null);
+  assert.equal(order.customerId, 'mona');
+  assert.equal(order.customerName, 'Mona Von Gemünden');
+  assert.equal(order.number, 'WEB-2026-0002');
+  assert.equal(order.source, 'link');
+  assert.equal(order.seen, false);
+  assert.equal(orderTotal(order.items), 2 * 800 + 1950);
+  assert.equal(order.pickupDate, '2026-11-28');
+  assert.match(order.note, /Bitte vakuumieren · Bestellt als: Mona/);
+  const neu = buildShopOrder(state, { name: 'Neuer Freund', phone: '0160 9876543', items: [{ productId: knacker.id, qty: 2 }] }, now);
+  assert.equal(neu.newCustomer.name, 'Neuer Freund');
+  assert.equal(neu.order.customerId, neu.newCustomer.id);
+  assert.equal(neu.newCustomer.notes, 'Kam über den Bestell-Link');
+});
+
+test('Bestell-Link: verständliche Fehler, Pause, Grenzen', () => {
+  const now = new Date('2026-11-23T10:00:00Z');
+  const state = { products: startProducts(), customers: [], orders: [], settings: {} };
+  const id = state.products[1].id;
+  const ok = { name: 'Max', phone: '0171 1234567', items: [{ productId: id, qty: 1 }] };
+  assert.throws(() => buildShopOrder(state, { ...ok, name: 'M' }, now), /Namen/);
+  assert.throws(() => buildShopOrder(state, { ...ok, phone: '123' }, now), /Handynummer/);
+  assert.throws(() => buildShopOrder(state, { ...ok, email: 'kaputt' }, now), /E-Mail/);
+  assert.throws(() => buildShopOrder(state, { ...ok, items: [] }, now), /mindestens ein Produkt/);
+  assert.throws(() => buildShopOrder(state, { ...ok, items: [{ productId: id, qty: 0 }] }, now), /mindestens ein Produkt/);
+  assert.throws(() => buildShopOrder(state, { ...ok, items: [{ productId: 'gibt-es-nicht', qty: 1 }] }, now), /gibt es leider nicht mehr/);
+  assert.throws(() => buildShopOrder(state, { ...ok, items: [{ productId: id, qty: 99 }] }, now), /Menge zu groß/);
+  assert.throws(() => buildShopOrder(state, { ...ok, pickupDate: '2026-11-01' }, now), /Vergangenheit/);
+  const closed = { ...state, settings: { shopOpen: false } };
+  assert.throws(() => buildShopOrder(closed, ok, now), (e) => e.status === 403 && /pausiert/.test(e.message));
+  const hidden = { ...state, products: state.products.map((p) => (p.id === id ? { ...p, active: false } : p)) };
+  assert.throws(() => buildShopOrder(hidden, ok, now), /gibt es leider nicht mehr/);
 });

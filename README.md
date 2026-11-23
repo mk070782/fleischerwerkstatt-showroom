@@ -62,6 +62,16 @@ Zusammengeführt wird mit derselben Logik wie beim Datei-Abgleich.
   Adressfeld einfügen → Speichern. Den Link erzeugt jedes verbundene Handy über „Link für den Bruder“.
 - Server-Update: `sync-server/server.mjs` und `public/logic.mjs` nach `app/` kopieren, Projekt neu starten.
 
+## Bestell-Link für Freunde
+
+`public/bestellen.html`: Freunde sehen das Sortiment, wählen Mengen und bestellen mit Name und Handynummer.
+Die Bestellung geht an den Abgleich-Server (`POST /api/bestellung`), der Preise selbst aus dem Sortiment rechnet,
+den Kunden an der Nummer erkennt oder neu anlegt und die Bestellung als `WEB-…` mit „NEU · über Link“ speichert.
+Der Link enthält Server-Adresse und einen eigenen **Bestell-Schlüssel** (`data/bestell-schluessel.txt` auf der NAS,
+wird beim ersten Start erzeugt) – damit kann man nur bestellen, nie Kunden oder Bestellungen lesen.
+Spam-Bremse: 5 Bestellungen je Absender in 10 Minuten, 300 am Tag. In der App: Verwaltung → Abgleich →
+„Bestell-Link teilen“ / „Pausieren“. Neuer Schlüssel = Datei löschen und Container neu starten (alte Links gelten dann nicht mehr).
+
 ## Am Rechner ausprobieren
 
 ```
