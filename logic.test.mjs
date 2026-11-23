@@ -273,7 +273,7 @@ test('PayPal-Link mit fertigem Betrag', () => {
 
 test('Nachricht: Bezahl-Link, bei bezahlt stattdessen Dank', () => {
   const o = { number: 'M-2026-0001', createdAt: '2026-11-22T10:00:00.000Z', items: [{ name: 'X', unit: 'Stück', priceCents: 800, qty: 2 }] };
-  const s = { paymentNote: 'Bezahlung über PayPal', paypal: 'kasse@example.com' };
+  const s = { paymentNote: 'Bezahlung über PayPal', paypal: 'kasse@example.com', paypalMode: 'waren' };
   const open = orderMessage(o, { name: 'Max' }, s).split('\n');
   const i = open.indexOf('Gesamt: 16,00 €');
   assert.equal(open[i + 1], 'Bezahlung über PayPal');
@@ -321,6 +321,20 @@ test('Anrede mit Vornamen, eigener Vorname, Sie/Du', () => {
   assert.equal(orderSubject(o, { tone: 'du' }), 'Deine Bestellung bei AirKneipi Fleischerwerkstatt vom 22.11.2026');
   assert.equal(orderSubject(o, {}), 'Ihre Bestellung bei AirKneipi Fleischerwerkstatt vom 22.11.2026');
   // PayPal-Seite zeigt dem Kunden das Datum statt der Bestellnummer
-  const pay = orderMessage(o, { name: 'Max' }, { paypal: 'kasse@example.com' }).split('\n').find((l) => l.startsWith('Jetzt bezahlen'));
+  const pay = orderMessage(o, { name: 'Max' }, { paypal: 'kasse@example.com', paypalMode: 'waren' }).split('\n').find((l) => l.startsWith('Jetzt bezahlen'));
   assert.equal(new URL(pay.slice('Jetzt bezahlen: '.length)).searchParams.get('item_name'), 'Bestellung vom 22.11.2026');
+});
+
+test('PayPal „Freunde & Familie“: kein Waren-Link, klarer Hinweis, PayPal.me mit Betrag', () => {
+  const o = { createdAt: '2026-11-22T10:00:00.000Z', items: [{ name: 'X', unit: 'Stück', priceCents: 800, qty: 1 }] };
+  // Standard ist jetzt Freunde & Familie
+  const mail = orderMessage(o, { name: 'Max' }, { paymentNote: 'Bezahlung über PayPal an kasse@example.com', paypal: 'kasse@example.com' }).split('\n');
+  const i = mail.indexOf('Gesamt: 8,00 €');
+  assert.deepEqual(mail.slice(i + 1, i + 3), ['Bezahlung über PayPal an kasse@example.com', 'Bitte als „Freunde & Familie“ senden.']);
+  assert.ok(!mail.some((l) => l.includes('cgi-bin') || l.startsWith('Jetzt bezahlen')), 'kein Waren-Link');
+  const me = orderMessage(o, { name: 'Max' }, { paypal: 'MaxMuster', paypalMode: 'freunde' });
+  assert.match(me, /Bitte als „Freunde & Familie“ senden\.\nJetzt bezahlen: https:\/\/paypal\.me\/MaxMuster\/8\.00EUR/);
+  assert.equal(paypalLink('kasse@example.com', 800, '', 'freunde'), '');
+  assert.equal(paypalLink('MaxMuster', 800, '', 'freunde'), 'https://paypal.me/MaxMuster/8.00EUR');
+  assert.ok(!orderMessage(o, { name: 'Max' }, {}).includes('Freunde'), 'ohne PayPal-Angabe kein Hinweis');
 });

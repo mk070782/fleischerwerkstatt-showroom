@@ -16,6 +16,7 @@ export const DEFAULT_SETTINGS = {
   greeting: 'Vielen Dank für Ihre Bestellung!',
   paymentNote: '', // z. B. „Bezahlung über PayPal an …“ – steht direkt unter dem Gesamtbetrag
   paypal: '', // PayPal.me-Name/-Link oder E-Mail: daraus wird ein Bezahl-Link mit fertigem Betrag
+  paypalMode: 'freunde', // 'freunde' (Freunde & Familie) oder 'waren' (Waren und Dienstleistungen)
   orderPrefix: '',
   tone: 'sie', // Ansprache in der Nachricht: 'sie' oder 'du'
 };
@@ -144,11 +145,13 @@ export function normalizePhone(phone, countryCode = '49') {
  * - E-Mail-Adresse → PayPal-Zahlungsseite an diese Adresse, Betrag und Bestellnummer vorausgefüllt
  * Leer oder unbrauchbar → ''.
  */
-export function paypalLink(paypal, cents, reference = '') {
+export function paypalLink(paypal, cents, reference = '', mode = 'waren') {
   const v = String(paypal ?? '').trim();
   const amount = ((Number(cents) || 0) / 100).toFixed(2);
   if (!v || !(Number(cents) > 0)) return '';
   if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) {
+    // Dieser Link öffnet bei PayPal immer „Waren und Dienstleistungen“ – für „Freunde & Familie“ gibt es keinen
+    if (mode === 'freunde') return '';
     const q = new URLSearchParams({ cmd: '_xclick', business: v, currency_code: 'EUR', amount, item_name: reference ? `Bestellung ${reference}` : 'Bestellung' });
     return `https://www.paypal.com/cgi-bin/webscr?${q}`;
   }
@@ -242,7 +245,8 @@ export function orderMessage(order, customer, settings = DEFAULT_SETTINGS) {
     lines.push('Bereits bezahlt – vielen Dank!');
   } else {
     if (s.paymentNote?.trim()) lines.push(s.paymentNote.trim());
-    const pay = paypalLink(s.paypal, orderTotal(order.items), payReference(order));
+    if (s.paypal?.trim() && s.paypalMode === 'freunde') lines.push('Bitte als „Freunde & Familie“ senden.');
+    const pay = paypalLink(s.paypal, orderTotal(order.items), payReference(order), s.paypalMode);
     if (pay) lines.push(`Jetzt bezahlen: ${pay}`);
   }
   if (order.pickupDate) lines.push(`Abholung: ${formatDate(order.pickupDate)}`);

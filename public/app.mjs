@@ -8,7 +8,7 @@ import {
 } from './logic.mjs';
 
 /** Muss zu public/version.json passen (und VERSION in sw.js). */
-export const APP_VERSION = 9;
+export const APP_VERSION = 10;
 
 const state = {
   products: [],
@@ -402,7 +402,7 @@ function viewOrder(id) {
           <a class="button mail ${c?.email ? '' : 'off'}" ${c?.email ? `href="${esc(mailLink(c.email, orderSubject(o, state.settings), text))}"` : 'aria-disabled="true"'} data-action="sent" data-via="E-Mail" data-id="${o.id}">E-Mail</a>
           ${navigator.share ? `<button data-action="share" data-id="${o.id}">Teilen …</button>` : ''}
           <button data-action="copy" data-id="${o.id}">Text kopieren</button>
-          ${!o.paid && paypalLink(state.settings.paypal, orderTotal(o.items), payReference(o)) ? `<button data-action="copy-paylink" data-id="${o.id}">PayPal-Link kopieren</button>` : ''}
+          ${!o.paid && paypalLink(state.settings.paypal, orderTotal(o.items), payReference(o), state.settings.paypalMode) ? `<button data-action="copy-paylink" data-id="${o.id}">PayPal-Link kopieren</button>` : ''}
         </div>
         ${!o.paid && !state.settings.paypal ? '<p class="hint">Tipp: Unter Verwaltung → „PayPal für Bezahl-Link“ eintragen, dann steht ein PayPal-Link mit dem fertigen Betrag in jeder Nachricht.</p>' : ''}
         ${!phone ? `<p class="hint">WhatsApp: beim Kunden fehlt die Telefonnummer.</p>` : ''}
@@ -537,7 +537,13 @@ function adminTexts() {
         <option value="du" ${s.tone === 'du' ? 'selected' : ''}>Du („hier deine Bestellung …“)</option></select></label>
       <p class="hint">Begrüßt wird immer mit Vornamen: „Hallo Max,“.</p>
       <label class="field">Zahlungshinweis (steht unter dem Gesamtbetrag)<input name="paymentNote" value="${esc(s.paymentNote)}" placeholder="z. B. Bezahlung über PayPal an …"></label>
-      <label class="field">PayPal für Bezahl-Link (PayPal.me-Name oder E-Mail)<input name="paypal" autocapitalize="off" spellcheck="false" value="${esc(s.paypal)}" placeholder="z. B. MeinName oder name@example.de"></label>
+      <label class="field">PayPal (PayPal.me-Name oder E-Mail)<input name="paypal" autocapitalize="off" spellcheck="false" value="${esc(s.paypal)}" placeholder="z. B. MeinName oder name@example.de"></label>
+      <label class="field">PayPal-Zahlungsart<select name="paypalMode">
+        <option value="freunde" ${s.paypalMode !== 'waren' ? 'selected' : ''}>Freunde &amp; Familie</option>
+        <option value="waren" ${s.paypalMode === 'waren' ? 'selected' : ''}>Waren und Dienstleistungen</option></select></label>
+      <p class="hint">${s.paypalMode === 'waren'
+        ? 'Die Nachricht enthält einen Link mit fertigem Betrag (PayPal-Gebühr, Käuferschutz für den Kunden).'
+        : 'Die Nachricht bittet um „Freunde &amp; Familie“. Mit einer E-Mail gibt es dafür keinen Link; mit einem PayPal.me-Namen kommt ein Link mit fertigem Betrag dazu, dort wählt der Kunde „Freunde &amp; Familie“.'}</p>
       <label class="field">Schlusssatz<input name="greeting" value="${esc(s.greeting)}"></label>
       <label class="field">Kontakt unter jeder Nachricht<textarea name="contact" rows="3" placeholder="Telefon, Adresse, Öffnungszeiten">${esc(s.contact)}</textarea></label>
       <label class="field">Ländervorwahl für Handynummern<input name="countryCode" inputmode="numeric" value="${esc(s.countryCode)}"></label>
@@ -775,7 +781,7 @@ document.addEventListener('click', async (ev) => {
       }
       case 'copy-paylink': {
         const o = order(id);
-        await navigator.clipboard.writeText(paypalLink(state.settings.paypal, orderTotal(o.items), payReference(o)));
+        await navigator.clipboard.writeText(paypalLink(state.settings.paypal, orderTotal(o.items), payReference(o), state.settings.paypalMode));
         toast('PayPal-Link kopiert');
         break;
       }

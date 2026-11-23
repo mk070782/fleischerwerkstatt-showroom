@@ -1,5 +1,5 @@
 // Offline-Modus: App-Dateien zwischenspeichern. Bei jeder neuen Version VERSION erhöhen.
-const VERSION = 'fw-showroom-9';
+const VERSION = 'fw-showroom-10';
 const FILES = [
   './', './index.html', './style.css', './app.mjs', './logic.mjs', './db.mjs', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png', './icons/favicon-64.png',
