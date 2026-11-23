@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createSyncServer } from './sync-server/server.mjs';
+import { createSyncServer, orderNotice } from './sync-server/server.mjs';
+import http from 'node:http';
+import { writeFile } from 'node:fs/promises';
 import { makeBackup, startProducts } from './public/logic.mjs';
 
 const KEY = 'test-schluessel-0123456789abcdef';
@@ -155,4 +157,45 @@ test('Ohne Bestell-Schlüssel ist der Bestell-Link aus', async () => {
   try {
     assert.equal((await fetch(`${base}/api/katalog?t=x`)).status, 404);
   } finally { server.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('Benachrichtigung: nach einer Bestellung über den Link geht ein Webhook raus', async () => {
+  // kleiner Empfänger statt Home Assistant
+  const got = [];
+  const hook = http.createServer((req, res) => { let b = ''; req.on('data', (c) => { b += c; }); req.on('end', () => { got.push(JSON.parse(b)); res.end('ok'); }); });
+  await new Promise((r) => hook.listen(0, '127.0.0.1', r));
+  try {
+    await withServer(async (base, dir) => {
+      await writeFile(join(dir, 'benachrichtigung.txt'), `http://127.0.0.1:${hook.address().port}/api/webhook/test\n`);
+      await sync(base, phone('M', {}));
+      const id = (await (await fetch(`${base}/api/katalog?t=${SHOP}`)).json()).products.find((p) => p.name === 'Wildschwein-Knacker').id;
+      const res = await order(base, { t: SHOP, name: 'Peter Probe', phone: '0172 5550001', note: 'bitte vakuumieren', items: [{ productId: id, qty: 2 }] });
+      assert.equal(res.status, 200);
+      for (let i = 0; i < 50 && !got.length; i++) await new Promise((r) => setTimeout(r, 20));
+      assert.equal(got.length, 1);
+      assert.equal(got[0].title, '🛒 Neue Bestellung von Peter Probe');
+      assert.equal(got[0].message, '16,00 € · 2 × Wildschwein-Knacker · „bitte vakuumieren“');
+      assert.equal(got[0].total, 1600);
+    });
+  } finally { hook.close(); }
+});
+
+test('Benachrichtigung: ohne Datei oder bei Fehler bleibt die Bestellung gültig', async () => {
+  await withServer(async (base, dir) => {
+    await sync(base, phone('M', {}));
+    const id = (await (await fetch(`${base}/api/katalog?t=${SHOP}`)).json()).products[0].id;
+    // keine Datei: einfach keine Meldung
+    assert.equal((await order(base, { t: SHOP, name: 'Max', phone: '0171 1234567', items: [{ productId: id, qty: 1 }] })).status, 200);
+    // Empfänger nicht erreichbar: Bestellung trotzdem angenommen
+    await writeFile(join(dir, 'benachrichtigung.txt'), 'http://127.0.0.1:9/nichts\n');
+    assert.equal((await order(base, { t: SHOP, name: 'Max', phone: '0171 1234567', items: [{ productId: id, qty: 1 }] })).status, 200);
+    const st = await (await sync(base, phone('M', {}))).json();
+    assert.equal(st.orders.length, 2);
+  });
+});
+
+test('Benachrichtigungstext mit kg, Abholtag und Hinweis', () => {
+  const n = orderNotice({ customerName: 'Mona', pickupDate: '2026-11-28', note: 'Danke!', items: [{ name: 'Hirschgulasch', unit: 'kg', priceCents: 1800, qty: 1.5 }] });
+  assert.equal(n.title, '🛒 Neue Bestellung von Mona');
+  assert.equal(n.message, '27,00 € · 1,5 kg Hirschgulasch · Abholung Sa., 28.11.2026 · „Danke!“');
 });

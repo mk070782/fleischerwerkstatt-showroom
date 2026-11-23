@@ -16,6 +16,8 @@
 //   POST /api/bestellung  {t, name, phone, email, pickupDate, note, items:[{productId, qty}]}
 //                       → legt die Bestellung an (Preise vom Server), Antwort = Zusammenfassung für die Danke-Seite
 // Der Bestell-Schlüssel liegt in DATA_DIR/bestell-schluessel.txt und wird beim ersten Start erzeugt.
+// Benachrichtigung: steht in DATA_DIR/benachrichtigung.txt eine Webhook-Adresse (z. B. Home Assistant im Heimnetz),
+// bekommt sie nach jeder Bestellung über den Link ein POST mit { title, message, name, total, pickupDate }.
 
 import http from 'node:http';
 import { existsSync } from 'node:fs';
@@ -25,9 +27,19 @@ import { timingSafeEqual, createHash, randomBytes } from 'node:crypto';
 
 const here = new URL('.', import.meta.url);
 const logicUrl = [new URL('./logic.mjs', here), new URL('../public/logic.mjs', here)].find((u) => existsSync(u));
-const { mergeData, readBackup, makeBackup, shopCatalog, buildShopOrder, orderTotal, itemLine, paypalLink, payReference, DEFAULT_SETTINGS } = await import(logicUrl.href);
+const { mergeData, readBackup, makeBackup, shopCatalog, buildShopOrder, orderTotal, itemLine, paypalLink, payReference, DEFAULT_SETTINGS,
+  formatEuro, formatQty, formatDate } = await import(logicUrl.href);
 
-export const VERSION = '2';
+export const VERSION = '3';
+
+/** Kurzer Text für die Push-Nachricht. */
+export function orderNotice(order) {
+  const items = order.items.map((i) => `${formatQty(i.qty)}${i.unit === 'kg' ? ' kg' : ' ×'} ${i.name}`).join(', ');
+  const parts = [formatEuro(orderTotal(order.items)), items];
+  if (order.pickupDate) parts.push(`Abholung ${formatDate(order.pickupDate)}`);
+  if (order.note) parts.push(`„${order.note.slice(0, 80)}“`);
+  return { title: `🛒 Neue Bestellung von ${order.customerName}`, message: parts.join(' · ') };
+}
 const MAX_ORDER_BODY = 50 * 1024;
 const ORDERS_PER_IP = 5; // je 10 Minuten
 const ORDERS_PER_DAY = 300;
@@ -38,6 +50,24 @@ export function createSyncServer({ key, dataDir, origins, shopToken = '', log = 
   if (!key || key.length < 24) throw new Error('SYNC_KEY fehlt oder ist kürzer als 24 Zeichen.');
   const keyHash = createHash('sha256').update(key).digest();
   const shopHash = shopToken ? createHash('sha256').update(shopToken).digest() : null;
+  const notifyFile = join(dataDir, 'benachrichtigung.txt');
+
+  /** Push-Benachrichtigung auslösen; ein Fehler dabei darf die Bestellung nie gefährden. */
+  async function notifyOrder(order) {
+    let url = '';
+    try { url = (await readFile(notifyFile, 'utf8')).trim(); } catch { return; } // nicht eingerichtet
+    if (!/^https?:\/\//.test(url)) return;
+    try {
+      const notice = orderNotice(order);
+      const res = await fetch(url, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, signal: AbortSignal.timeout(5000),
+        body: JSON.stringify({ ...notice, name: order.customerName, total: orderTotal(order.items), pickupDate: order.pickupDate || '' }),
+      });
+      if (!res.ok) log(`Benachrichtigung fehlgeschlagen: HTTP ${res.status}`);
+    } catch (err) {
+      log(`Benachrichtigung fehlgeschlagen: ${err.message}`);
+    }
+  }
   const orderTimes = new Map(); // IP → Zeitpunkte der letzten Bestellungen
   let ordersToday = { day: '', n: 0 };
   const stateFile = join(dataDir, 'stand.json');
@@ -169,6 +199,7 @@ export function createSyncServer({ key, dataDir, origins, shopToken = '', log = 
           return { order: built.order, state: st };
         });
         countOrder(ip);
+        notifyOrder(order); // im Hintergrund, die Antwort an den Freund wartet nicht darauf
         const s = { ...DEFAULT_SETTINGS, ...(state.settings || {}) };
         const total = orderTotal(order.items);
         log(`${new Date().toISOString()} Bestellung über den Link: ${order.number} von ${order.customerName}, ${(total / 100).toFixed(2)} EUR`);

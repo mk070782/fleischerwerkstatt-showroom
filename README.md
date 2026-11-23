@@ -72,6 +72,11 @@ wird beim ersten Start erzeugt) – damit kann man nur bestellen, nie Kunden ode
 Spam-Bremse: 5 Bestellungen je Absender in 10 Minuten, 300 am Tag. In der App: Verwaltung → Abgleich →
 „Bestell-Link teilen“ / „Pausieren“. Neuer Schlüssel = Datei löschen und Container neu starten (alte Links gelten dann nicht mehr).
 
+**Push-Benachrichtigung:** Steht in `data/benachrichtigung.txt` auf der NAS eine Webhook-Adresse, schickt der Server
+nach jeder Bestellung über den Link `{ title, message, name, total, pickupDate }` dorthin. Eingerichtet ist die
+Home-Assistant-Automation „Fleischerwerkstatt: neue Bestellung über den Bestell-Link“ (Webhook, nur Heimnetz) →
+Push aufs iPhone. Die Adresse wird bei jeder Bestellung neu gelesen, ändern braucht keinen Neustart.
+
 ## Am Rechner ausprobieren
 
 ```
