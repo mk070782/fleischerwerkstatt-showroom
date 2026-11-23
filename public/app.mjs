@@ -4,7 +4,11 @@ import {
   cleanQty, lineTotal, orderTotal, itemCount, addItem, setQty, nextOrderNumber, normalizePhone, formatDate,
   orderMessage, orderSubject, whatsappLink, telegramLink, telegramChatLink, mailLink, matches,
   makeBackup, readBackup, newId, startProducts, sampleCustomers, mergeData, duplicateNumbers, migrateStartIds, fillStartPhotos,
+  paypalLink, salesSummary, monthLabel, monthKey,
 } from './logic.mjs';
+
+/** Muss zu public/version.json passen (und VERSION in sw.js). */
+export const APP_VERSION = 6;
 
 const state = {
   products: [],
@@ -15,6 +19,7 @@ const state = {
   category: '',
   customerQuery: '',
   orderFilter: 'alle',
+  salesMonth: '',
   tombstones: {}, // gelöschte IDs → Zeitpunkt, damit der Abgleich nichts zurückholt
   device: { prefix: '' }, // nur dieses Handy: Kürzel vor der Bestellnummer
   lastSync: null,
@@ -340,19 +345,20 @@ function orderRow(o) {
   return `<a class="row link" href="#/auftrag/${o.id}">
     <div><strong>${esc(o.number)} · ${esc(c?.name || o.customerName || 'ohne Kunde')}</strong>
     <p class="hint">${formatDate(o.createdAt)}${o.pickupDate ? ` · Abholung ${formatDate(o.pickupDate)}` : ''}</p></div>
-    <div class="row-end"><span class="status s-${o.status}">${STATUS[o.status] || o.status}</span><strong>${formatEuro(orderTotal(o.items))}</strong></div>
+    <div class="row-end"><span class="badges"><span class="status s-${o.status}">${STATUS[o.status] || o.status}</span>${o.status === 'storniert' ? '' : o.paid ? '<span class="pay pay-yes">bezahlt</span>' : '<span class="pay pay-no">unbezahlt</span>'}</span><strong>${formatEuro(orderTotal(o.items))}</strong></div>
   </a>`;
 }
 
 function viewOrders() {
   const f = state.orderFilter;
-  const list = state.orders.filter((o) => f === 'alle' || o.status === f).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  const open = state.orders.filter((o) => o.status === 'offen' || o.status === 'verschickt');
+  const unpaid = (o) => !o.paid && o.status !== 'storniert';
+  const list = state.orders.filter((o) => f === 'alle' || (f === 'unbezahlt' ? unpaid(o) : o.status === f)).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const open = state.orders.filter(unpaid);
   return `
-    <div class="intro"><div><h1>Verlauf</h1><p>${state.orders.length} Bestellungen · offen ${formatEuro(open.reduce((s, o) => s + orderTotal(o.items), 0))}</p></div>
-      <a class="button primary" href="#/bestellung">+ Bestellung</a></div>
+    <div class="intro"><div><h1>Verlauf</h1><p>${state.orders.length} Bestellungen · unbezahlt ${formatEuro(open.reduce((s, o) => s + orderTotal(o.items), 0))}</p></div>
+      <div class="actions tight"><a class="button" href="#/umsatz">Umsatz</a><a class="button primary" href="#/bestellung">+ Bestellung</a></div></div>
     <div class="chips" role="group" aria-label="Status">
-      ${['alle', ...Object.keys(STATUS)].map((k) => `<button data-action="order-filter" data-f="${k}" aria-pressed="${f === k}">${k === 'alle' ? 'Alle' : STATUS[k]}</button>`).join('')}
+      ${['alle', 'unbezahlt', ...Object.keys(STATUS)].map((k) => `<button data-action="order-filter" data-f="${k}" aria-pressed="${f === k}">${k === 'alle' ? 'Alle' : k === 'unbezahlt' ? `Unbezahlt (${open.length})` : STATUS[k]}</button>`).join('')}
     </div>
     <section class="panel">${list.length ? list.map(orderRow).join('') : '<p class="empty">Keine Bestellungen.</p>'}</section>`;
 }
@@ -376,6 +382,10 @@ function viewOrder(id) {
         <ul class="lines readonly">${o.items.map((i) => `<li><div class="line-name"><strong>${i.unit === 'kg' ? `${formatQty(i.qty)} kg` : `${formatQty(i.qty)} ×`} ${esc(i.name)}</strong>
           <small>${i.unit === 'kg' ? `${formatEuro(i.priceCents)} pro kg` : `${formatEuro(i.priceCents)}${i.size ? ` für ${esc(i.size)}` : ''}`}</small></div><strong class="line-total">${formatEuro(lineTotal(i))}</strong></li>`).join('')}</ul>
         <div class="total"><span>Gesamt</span><strong>${formatEuro(orderTotal(o.items))}</strong></div>
+        <div class="paybox ${o.paid ? 'is-paid' : ''}">
+          <span>${o.paid ? `✓ Bezahlt${o.paidAt ? ` am ${formatDate(o.paidAt)}` : ''}` : 'Noch nicht bezahlt'}</span>
+          <button data-action="toggle-paid" data-id="${o.id}" class="${o.paid ? '' : 'primary'}">${o.paid ? 'Doch unbezahlt' : 'Als bezahlt markieren'}</button>
+        </div>
         ${o.pickupDate ? `<p>Abholung: <strong>${formatDate(o.pickupDate)}</strong></p>` : ''}
         ${o.note ? `<p>Hinweis: ${esc(o.note)}</p>` : ''}
         ${o.sentAt ? `<p class="hint">Zuletzt verschickt ${formatDate(o.sentAt)} per ${esc(o.sentVia)}</p>` : ''}
@@ -390,7 +400,9 @@ function viewOrder(id) {
           <a class="button mail ${c?.email ? '' : 'off'}" ${c?.email ? `href="${esc(mailLink(c.email, orderSubject(o, state.settings), text))}"` : 'aria-disabled="true"'} data-action="sent" data-via="E-Mail" data-id="${o.id}">E-Mail</a>
           ${navigator.share ? `<button data-action="share" data-id="${o.id}">Teilen …</button>` : ''}
           <button data-action="copy" data-id="${o.id}">Text kopieren</button>
+          ${!o.paid && paypalLink(state.settings.paypal, orderTotal(o.items), o.number) ? `<button data-action="copy-paylink" data-id="${o.id}">PayPal-Link kopieren</button>` : ''}
         </div>
+        ${!o.paid && !state.settings.paypal ? '<p class="hint">Tipp: Unter Verwaltung → „PayPal für Bezahl-Link“ eintragen, dann steht ein PayPal-Link mit dem fertigen Betrag in jeder Nachricht.</p>' : ''}
         ${!phone ? `<p class="hint">WhatsApp: beim Kunden fehlt die Telefonnummer.</p>` : ''}
         ${!c?.email ? `<p class="hint">E-Mail: beim Kunden fehlt die Adresse.</p>` : ''}
         <p class="hint">Telegram öffnet den Teilen-Dialog, dort den Kontakt wählen.${tgChat ? ` <a href="${esc(tgChat)}" target="_blank" rel="noopener">Chat mit @${esc(c.telegram.replace(/^@/, ''))} öffnen</a>` : ''}</p>
@@ -399,10 +411,39 @@ function viewOrder(id) {
     </div>`;
 }
 
+function viewSales() {
+  const s = salesSummary(state.orders);
+  const month = state.salesMonth || s.months[0]?.key || monthKey(new Date().toISOString());
+  const days = s.days(month);
+  const n = (c) => `${c} ${c === 1 ? 'Bestellung' : 'Bestellungen'}`;
+  const tile = (label, r) => `<div class="tile"><span>${label}</span><strong>${formatEuro(r.total)}</strong><small>${n(r.count)}${r.open ? ` · ${formatEuro(r.open)} unbezahlt` : ''}</small></div>`;
+  const row = (r, label, action = '') => `<${action ? `button type="button" ${action}` : 'div'} class="row sales-row${action && r.key === month ? ' current' : ''}">
+      <div><strong>${label}</strong><p class="hint">${n(r.count)}${r.open ? ` · ${formatEuro(r.open)} unbezahlt` : ' · alles bezahlt'}</p></div>
+      <strong>${formatEuro(r.total)}</strong></${action ? 'button' : 'div'}>`;
+  return `
+    <p><a href="#/verlauf">← Verlauf</a></p>
+    <div class="intro"><div><h1>Umsatz</h1><p>Nach Bestelldatum, Stornos zählen nicht mit</p></div></div>
+    <div class="tiles">
+      ${tile('Heute', s.today)}
+      ${tile('Dieser Monat', s.month)}
+      <button type="button" class="tile warn-tile" data-action="show-unpaid"><span>Noch nicht bezahlt</span><strong>${formatEuro(s.unpaid.total)}</strong><small>${n(s.unpaid.count)} · anzeigen</small></button>
+    </div>
+    <div class="layout">
+      <section class="panel">
+        <h2>Monate</h2>
+        ${s.months.length ? s.months.map((m) => row(m, m.label, `data-action="sales-month" data-m="${m.key}"`)).join('') : '<p class="empty">Noch keine Bestellungen.</p>'}
+      </section>
+      <section class="panel">
+        <h2>${esc(monthLabel(month))} nach Tagen</h2>
+        ${days.length ? days.map((d) => row(d, formatDate(d.key))).join('') : '<p class="empty">In diesem Monat keine Bestellungen.</p>'}
+      </section>
+    </div>`;
+}
+
 function viewAdmin() {
   const s = state.settings;
   return `
-    <div class="intro"><div><h1>Verwaltung</h1><p>Produkte, Texte und Datensicherung</p></div>
+    <div class="intro"><div><h1>Verwaltung</h1><p>Produkte, Texte und Datensicherung · App-Version ${APP_VERSION}</p></div>
       <a class="button primary" href="#/produkt/neu">+ Produkt</a></div>
     <div class="layout">
       <section class="panel">
@@ -420,6 +461,7 @@ function viewAdmin() {
           <label class="field">Untertitel<input name="subtitle" value="${esc(s.subtitle)}"></label>
           <label class="field">Kontakt unter jeder Nachricht<textarea name="contact" rows="3" placeholder="Telefon, Adresse, Öffnungszeiten">${esc(s.contact)}</textarea></label>
           <label class="field">Zahlungshinweis (steht unter dem Gesamtbetrag)<input name="paymentNote" value="${esc(s.paymentNote)}" placeholder="z. B. Bezahlung über PayPal an …"></label>
+          <label class="field">PayPal für Bezahl-Link (PayPal.me-Name oder E-Mail)<input name="paypal" autocapitalize="off" spellcheck="false" value="${esc(s.paypal)}" placeholder="z. B. MeinName oder name@example.de"></label>
           <label class="field">Schlusssatz<input name="greeting" value="${esc(s.greeting)}"></label>
           <label class="field">Ländervorwahl für Handynummern<input name="countryCode" inputmode="numeric" value="${esc(s.countryCode)}"></label>
           <button class="primary" type="submit">Speichern</button>
@@ -529,7 +571,7 @@ function route() {
     return;
   }
   const [, view = 'showroom', id] = (location.hash || '#/showroom').split('/');
-  const navKey = { kunde: 'kunden', auftrag: 'verlauf', produkt: 'verwaltung' }[view] || view;
+  const navKey = { kunde: 'kunden', auftrag: 'verlauf', umsatz: 'verlauf', produkt: 'verwaltung' }[view] || view;
   for (const a of document.querySelectorAll('#nav a')) {
     if (a.dataset.nav === navKey) a.setAttribute('aria-current', 'page');
     else a.removeAttribute('aria-current');
@@ -541,6 +583,7 @@ function route() {
     kunden: viewCustomers,
     kunde: () => viewCustomer(id),
     verlauf: viewOrders,
+    umsatz: viewSales,
     auftrag: () => viewOrder(id),
     verwaltung: viewAdmin,
     produkt: () => viewProduct(id),
@@ -673,6 +716,26 @@ document.addEventListener('click', async (ev) => {
         location.hash = '#/bestellung';
         break;
       case 'order-filter': state.orderFilter = el.dataset.f; rerender(); break;
+      case 'show-unpaid': state.orderFilter = 'unbezahlt'; location.hash = '#/verlauf'; break;
+      case 'sales-month': state.salesMonth = el.dataset.m; rerender(); break;
+      case 'toggle-paid': {
+        const o = order(id);
+        o.paid = !o.paid;
+        o.paidAt = o.paid ? now() : '';
+        o.updatedAt = now();
+        await db.put('orders', o);
+        scheduleSync();
+        toast(o.paid ? `${o.number}: bezahlt` : `${o.number}: wieder unbezahlt`);
+        rerender();
+        break;
+      }
+      case 'copy-paylink': {
+        const o = order(id);
+        await navigator.clipboard.writeText(paypalLink(state.settings.paypal, orderTotal(o.items), o.number));
+        toast('PayPal-Link kopiert');
+        break;
+      }
+      case 'app-update': await updateApp(); break;
       case 'order-edit': {
         const o = order(id);
         if (state.draft.items.length && !confirm('Die angefangene Bestellung wird dabei verworfen. Weiter?')) break;
@@ -968,7 +1031,53 @@ async function start() {
   route();
   updateSyncStatus();
   autoSync();
-  if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
+  if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+    const hadController = Boolean(navigator.serviceWorker.controller);
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => {});
+    // Neuer Service Worker übernimmt → neue Programmversion laden (nicht mitten im Tippen)
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController) return;
+      if (safeToRerender()) location.reload(); else showUpdateBanner();
+    });
+  }
+  setTimeout(checkForUpdate, 3000);
 }
+
+// ---------- Programm-Updates ----------
+
+let lastUpdateCheck = 0;
+let updateShown = false;
+
+/** Fragt beim Server nach, ob es eine neuere Programmversion gibt (version.json wird nie zwischengespeichert). */
+async function checkForUpdate() {
+  if (Date.now() - lastUpdateCheck < 60 * 1000) return;
+  lastUpdateCheck = Date.now();
+  try {
+    navigator.serviceWorker?.getRegistration().then((reg) => reg?.update()).catch(() => {});
+    const res = await fetch(`version.json?t=${Date.now()}`, { cache: 'no-store' });
+    const { version } = await res.json();
+    if (Number(version) > APP_VERSION) showUpdateBanner();
+  } catch { /* offline: später wieder */ }
+}
+
+function showUpdateBanner() {
+  if (updateShown) return;
+  updateShown = true;
+  const bar = document.createElement('div');
+  bar.id = 'update-banner';
+  bar.innerHTML = '<span>Neue Version der App verfügbar</span><button class="primary" data-action="app-update">Jetzt aktualisieren</button>';
+  document.body.append(bar);
+}
+
+async function updateApp() {
+  try {
+    const reg = await navigator.serviceWorker?.getRegistration();
+    await reg?.update();
+    if (window.caches) for (const k of await caches.keys()) await caches.delete(k);
+  } catch { /* egal, neu laden hilft trotzdem */ }
+  location.reload();
+}
+
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkForUpdate(); });
 
 start();

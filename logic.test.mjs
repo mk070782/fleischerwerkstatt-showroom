@@ -4,6 +4,7 @@ import {
   formatEuro, parseEuro, centsToInput, orderTotal, itemCount, addItem, setQty, nextOrderNumber,
   normalizePhone, orderMessage, whatsappLink, telegramLink, telegramChatLink, mailLink, matches,
   makeBackup, readBackup, sampleData, BACKUP_FORMAT, itemLine, cleanQty, startProducts, STARTSORTIMENT, mergeData, duplicateNumbers, migrateStartIds, startId, fillStartPhotos,
+  paypalLink, salesSummary, dayKey,
 } from './public/logic.mjs';
 
 test('Euro formatieren und einlesen', () => {
@@ -71,7 +72,8 @@ test('Startsortiment entspricht den Plakaten', () => {
   assert.equal(find('Hirschsalami').priceCents, 1000);
   assert.equal(find('Chilli con Carne', 'Dose 800 g').priceCents, 1400);
   assert.equal(find('Wildschwein-Knacker', '5 Stück').priceCents, 800); // Preis seit 22.11.2026
-  assert.equal(find('Wildhackfleisch').unit, 'kg');
+  assert.equal(find('Wildschwein-Hackfleisch').unit, 'kg');
+  assert.equal(find('Wildschwein-Hackfleisch').priceCents, 1300); // Preis seit 23.11.2026
   assert.equal(find('Marinierte Wildschwein-Rückensteaks').priceCents, 3000);
   assert.equal(find('Rehgulasch').priceCents, 1800);
   assert.equal(find('Rehgulasch', 'Dose 400 g').priceCents, 900);
@@ -241,7 +243,7 @@ test('Plakatfotos: jedes Startprodukt hat sein Bild, eigene Fotos bleiben', asyn
   const { existsSync } = await import('node:fs');
   const products = startProducts();
   for (const p of products) {
-    assert.equal(p.photo, `produkte/${p.id}.jpg`);
+    assert.match(p.photo, new RegExp(`^produkte/${p.id}(-v\\d+)?\\.jpg$`));
     assert.ok(existsSync(new URL(`./public/${p.photo}`, import.meta.url)), p.photo);
   }
   const old = products.map((p) => ({ ...p, photo: '' }));
@@ -249,6 +251,53 @@ test('Plakatfotos: jedes Startprodukt hat sein Bild, eigene Fotos bleiben', asyn
   old.push({ id: 'eigenes', name: 'X', photo: '' });
   const filled = fillStartPhotos(old);
   assert.equal(filled.length, 17);
-  assert.ok(filled.every((p) => p.photo === `produkte/${p.id}.jpg`));
+  assert.ok(filled.every((p) => p.photo.startsWith(`produkte/${p.id}`)));
   assert.ok(!filled.some((p) => p.id === 'start-01' || p.id === 'eigenes'));
+});
+
+test('PayPal-Link mit fertigem Betrag', () => {
+  const mail = new URL(paypalLink('kasse@example.com', 4100, 'M-2026-0001'));
+  assert.equal(mail.origin + mail.pathname, 'https://www.paypal.com/cgi-bin/webscr');
+  assert.equal(mail.searchParams.get('business'), 'kasse@example.com');
+  assert.equal(mail.searchParams.get('amount'), '41.00');
+  assert.equal(mail.searchParams.get('currency_code'), 'EUR');
+  assert.equal(mail.searchParams.get('item_name'), 'Bestellung M-2026-0001');
+  assert.equal(paypalLink('MaxMuster', 1250), 'https://paypal.me/MaxMuster/12.50EUR');
+  assert.equal(paypalLink('https://paypal.me/MaxMuster', 1250), 'https://paypal.me/MaxMuster/12.50EUR');
+  assert.equal(paypalLink('paypal.me/MaxMuster/5EUR', 800), 'https://paypal.me/MaxMuster/8.00EUR');
+  assert.equal(paypalLink('', 1000), '');
+  assert.equal(paypalLink('kasse@example.com', 0), '');
+  assert.equal(paypalLink('kein gültiger name!', 1000), '');
+});
+
+test('Nachricht: Bezahl-Link, bei bezahlt stattdessen Dank', () => {
+  const o = { number: 'M-2026-0001', createdAt: '2026-11-22T10:00:00.000Z', items: [{ name: 'X', unit: 'Stück', priceCents: 800, qty: 2 }] };
+  const s = { paymentNote: 'Bezahlung über PayPal', paypal: 'kasse@example.com' };
+  const open = orderMessage(o, { name: 'Max' }, s).split('\n');
+  const i = open.indexOf('Gesamt: 16,00 €');
+  assert.equal(open[i + 1], 'Bezahlung über PayPal');
+  assert.match(open[i + 2], /^Jetzt bezahlen: https:\/\/www\.paypal\.com\/cgi-bin\/webscr\?.*amount=16\.00/);
+  const paid = orderMessage({ ...o, paid: true }, { name: 'Max' }, s);
+  assert.match(paid, /Bereits bezahlt – vielen Dank!/);
+  assert.ok(!paid.includes('paypal.com') && !paid.includes('Bezahlung über PayPal'));
+});
+
+test('Umsatz: heute, Monat, unbezahlt, Monate und Tage, ohne Stornos', () => {
+  const item = (cents) => [{ name: 'X', unit: 'Stück', priceCents: cents, qty: 1 }];
+  const at = (d) => `${d}T12:00:00.000Z`;
+  const orders = [
+    { createdAt: at('2026-11-23'), items: item(1000), paid: true },
+    { createdAt: at('2026-11-23'), items: item(500) },
+    { createdAt: at('2026-11-20'), items: item(2000), paid: true },
+    { createdAt: at('2026-11-20'), items: item(9999), status: 'storniert' },
+    { createdAt: at('2026-10-05'), items: item(700) },
+  ];
+  const s = salesSummary(orders, new Date(at('2026-11-23')));
+  assert.deepEqual(s.today, { count: 2, total: 1500, paid: 1000, open: 500 });
+  assert.deepEqual(s.month, { count: 3, total: 3500, paid: 3000, open: 500 });
+  assert.deepEqual(s.unpaid, { count: 2, total: 1200, paid: 0, open: 1200 });
+  assert.deepEqual(s.months.map((m) => [m.key, m.label, m.total]), [['2026-11', 'November 2026', 3500], ['2026-10', 'Oktober 2026', 700]]);
+  assert.deepEqual(s.days('2026-11').map((d) => [d.key, d.total, d.count]), [['2026-11-23', 1500, 2], ['2026-11-20', 2000, 1]]);
+  assert.equal(dayKey(at('2026-11-23')), '2026-11-23');
+  assert.deepEqual(salesSummary([]).months, []);
 });

@@ -12,6 +12,7 @@ Gebaut im Stil der AirBritti 3D-Druck-Werkstatt: Node 24, keine Fremdpakete.
 | **Bestellung** | Kunde wählen (oder neuen Namen tippen), Mengen mit − / + (Stück: 1er-Schritte, kg: 0,5er-Schritte, frei eintippbar), Abholtag, Hinweis, Gesamtpreis, speichern. |
 | **Kunden** | Kartei mit Name, Telefon/WhatsApp, E-Mail, Telegram-Name, Adresse, Notiz; Suche; Bestellungen je Kunde. |
 | **Verlauf** | Alle Bestellungen mit Nummer (2026-0001 …), Status Offen / Verschickt / Erledigt / Storniert, Verschicken-Knöpfe. |
+| **Umsatz** (im Verlauf) | Heute, dieser Monat, noch nicht bezahlt; Monate und Tage mit Summe, bezahlt/unbezahlt. Stornos zählen nicht. |
 | **Verwaltung** | Produkte anlegen/ändern (Foto vom Handy, wird auf 900 px verkleinert), Betriebsname, Kontaktzeile, Sicherung. |
 
 ## Verschicken
@@ -21,7 +22,9 @@ Gebaut im Stil der AirBritti 3D-Druck-Werkstatt: Node 24, keine Fremdpakete.
 - **E-Mail**: öffnet das Mailprogramm mit Adresse, Betreff und Text.
 - **Teilen …** (am Handy): normales Teilen-Menü, z. B. für Signal oder SMS. **Text kopieren** geht immer.
 
-Nach dem Verschicken springt der Status von „Offen“ auf „Verschickt“.
+Nach dem Verschicken springt der Status von „Offen“ auf „Verschickt“. Jede Bestellung hat zusätzlich **bezahlt / unbezahlt**.
+Ist unter Verwaltung „PayPal für Bezahl-Link“ eingetragen (PayPal.me-Name oder E-Mail), steht in jeder unbezahlten
+Nachricht ein PayPal-Link mit dem fertigen Betrag; bei bezahlten Bestellungen stattdessen „Bereits bezahlt – vielen Dank!“.
 
 ## Daten
 
@@ -72,7 +75,8 @@ Damit man die App installieren kann („Zum Home-Bildschirm“) und sie offline 
 über **HTTPS** erreichbar sein (z. B. eigene Subdomain oder GitHub Pages). Es sind nur statische Dateien.
 Danach am iPhone in Safari öffnen → Teilen → „Zum Home-Bildschirm“; am Android in Chrome → „App installieren“.
 
-Bei jeder neuen Version `VERSION` in `public/sw.js` hochzählen.
+Bei jeder neuen Version **drei Stellen** hochzählen: `VERSION` in `public/sw.js`, `APP_VERSION` in `public/app.mjs` und `public/version.json`.
+Die App prüft beim Öffnen `version.json` und zeigt „Neue Version verfügbar → Jetzt aktualisieren“.
 
 ## Startsortiment
 

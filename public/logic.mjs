@@ -15,6 +15,7 @@ export const DEFAULT_SETTINGS = {
   contact: '',
   greeting: 'Vielen Dank für Ihre Bestellung!',
   paymentNote: '', // z. B. „Bezahlung über PayPal an …“ – steht direkt unter dem Gesamtbetrag
+  paypal: '', // PayPal.me-Name/-Link oder E-Mail: daraus wird ein Bezahl-Link mit fertigem Betrag
   orderPrefix: '',
 };
 
@@ -136,6 +137,68 @@ export function normalizePhone(phone, countryCode = '49') {
   return s;
 }
 
+/**
+ * PayPal-Link mit fertigem Betrag.
+ * - PayPal.me-Name oder -Link → https://paypal.me/NAME/41.00EUR
+ * - E-Mail-Adresse → PayPal-Zahlungsseite an diese Adresse, Betrag und Bestellnummer vorausgefüllt
+ * Leer oder unbrauchbar → ''.
+ */
+export function paypalLink(paypal, cents, reference = '') {
+  const v = String(paypal ?? '').trim();
+  const amount = ((Number(cents) || 0) / 100).toFixed(2);
+  if (!v || !(Number(cents) > 0)) return '';
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) {
+    const q = new URLSearchParams({ cmd: '_xclick', business: v, currency_code: 'EUR', amount, item_name: reference ? `Bestellung ${reference}` : 'Bestellung' });
+    return `https://www.paypal.com/cgi-bin/webscr?${q}`;
+  }
+  const name = v.replace(/^https?:\/\//, '').replace(/^(www\.)?paypal\.me\//i, '').replace(/\/.*$/, '');
+  return /^[A-Za-z0-9._-]{2,40}$/.test(name) ? `https://paypal.me/${name}/${amount}EUR` : '';
+}
+
+const STORNO = 'storniert';
+const pad2 = (n) => String(n).padStart(2, '0');
+/** Lokaler Tag "2026-11-23" und Monat "2026-11" einer ISO-Zeit. */
+export const dayKey = (iso) => { const d = new Date(iso); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; };
+export const monthKey = (iso) => dayKey(iso).slice(0, 7);
+
+const MONTHS = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
+export const monthLabel = (key) => `${MONTHS[Number(key.slice(5, 7)) - 1]} ${key.slice(0, 4)}`;
+
+function sum(orders) {
+  const r = { count: 0, total: 0, paid: 0, open: 0 };
+  for (const o of orders) {
+    if (o.status === STORNO) continue;
+    const t = orderTotal(o.items);
+    r.count += 1;
+    r.total += t;
+    if (o.paid) r.paid += t; else r.open += t;
+  }
+  return r;
+}
+
+/**
+ * Umsatz nach Bestelldatum (Stornos zählen nicht).
+ * today/month: laufender Tag und Monat; months: alle Monate mit Bestellungen, neueste zuerst;
+ * days(month): Tage eines Monats, neueste zuerst; unpaid: alles noch nicht Bezahlte.
+ */
+export function salesSummary(orders = [], now = new Date()) {
+  const today = dayKey(now.toISOString());
+  const month = today.slice(0, 7);
+  const valid = orders.filter((o) => o.createdAt);
+  const group = (keyFn) => {
+    const m = new Map();
+    for (const o of valid) { const k = keyFn(o.createdAt); if (!m.has(k)) m.set(k, []); m.get(k).push(o); }
+    return [...m].map(([key, list]) => ({ key, ...sum(list) })).filter((g) => g.count).sort((a, b) => b.key.localeCompare(a.key));
+  };
+  return {
+    today: sum(valid.filter((o) => dayKey(o.createdAt) === today)),
+    month: sum(valid.filter((o) => monthKey(o.createdAt) === month)),
+    unpaid: sum(valid.filter((o) => !o.paid)),
+    months: group(monthKey).map((g) => ({ ...g, label: monthLabel(g.key) })),
+    days: (m) => group(dayKey).filter((g) => g.key.startsWith(m)),
+  };
+}
+
 export function formatDate(iso) {
   if (!iso) return '';
   const d = new Date(iso.length === 10 ? `${iso}T12:00:00` : iso);
@@ -158,7 +221,13 @@ export function orderMessage(order, customer, settings = DEFAULT_SETTINGS) {
   }
   lines.push('');
   lines.push(`Gesamt: ${formatEuro(orderTotal(order.items))}`);
-  if (s.paymentNote?.trim()) lines.push(s.paymentNote.trim());
+  if (order.paid) {
+    lines.push('Bereits bezahlt – vielen Dank!');
+  } else {
+    if (s.paymentNote?.trim()) lines.push(s.paymentNote.trim());
+    const pay = paypalLink(s.paypal, orderTotal(order.items), order.number);
+    if (pay) lines.push(`Jetzt bezahlen: ${pay}`);
+  }
   if (order.pickupDate) lines.push(`Abholung: ${formatDate(order.pickupDate)}`);
   if (order.note?.trim()) lines.push(`Hinweis: ${order.note.trim()}`);
   if (s.greeting?.trim()) {
@@ -318,7 +387,7 @@ export const STARTSORTIMENT = [
   ['Wildschwein-Käse-Bratwurst', 'Grill', 'Stück', '8', '4 Stück', ''],
   ['Chilli-Cheddar-Bratwurst', 'Grill', 'Stück', '8', '4 Stück', ''],
   ['Wildfleischkäse mit Käse', 'Wurst', 'Stück', '13', '1-kg-Schale', ''],
-  ['Wildhackfleisch', 'Frischfleisch', 'kg', '17', '', ''],
+  ['Wildschwein-Hackfleisch', 'Frischfleisch', 'kg', '13', '', ''],
   ['Wildschweingulasch', 'Frischfleisch', 'kg', '17', '', ''],
   ['Hirschgulasch', 'Frischfleisch', 'kg', '18', '', ''],
   ['Rehgulasch', 'Frischfleisch', 'kg', '18', '', ''],
@@ -336,7 +405,9 @@ export const CATEGORIES = ['Wurst', 'Grill', 'Frischfleisch', 'Dosen'];
 export const startId = (index) => `start-${String(index + 1).padStart(2, '0')}`;
 
 /** Plakatfoto zum Startsortiment (liegt in public/produkte/). */
-export const startPhoto = (index) => `produkte/${startId(index)}.jpg`;
+/** Plakate mit neuem Preis bekommen einen neuen Dateinamen, damit Handys das alte Bild nicht aus dem Zwischenspeicher zeigen. */
+export const PHOTO_VERSION = { 'start-02': 2, 'start-09': 2 };
+export const startPhoto = (index) => { const id = startId(index); return `produkte/${id}${PHOTO_VERSION[id] ? `-v${PHOTO_VERSION[id]}` : ''}.jpg`; };
 
 export function startProducts() {
   return STARTSORTIMENT.map(([name, category, unit, price, size, description], index) => ({

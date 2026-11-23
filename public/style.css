@@ -185,3 +185,27 @@ summary { cursor: pointer; color: var(--muted); }
 #sync-dot[data-state="busy"] { background: var(--gold); animation: pulse 1s infinite alternate; }
 #sync-dot[data-state="error"] { background: var(--red); }
 @keyframes pulse { to { opacity: .35; } }
+
+/* Bezahlt / unbezahlt */
+.badges { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+.pay { font-size: 12px; padding: 2px 8px; border-radius: 999px; font-weight: 600; white-space: nowrap; }
+.pay-yes { background: #22391f; color: #a8dba3; }
+.pay-no { background: #3a2420; color: #f0b3a6; }
+.paybox { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin: 12px 0 4px; padding: 10px 12px; border-radius: 10px; background: #3a2420; color: #f0b3a6; font-weight: 600; }
+.paybox.is-paid { background: #22391f; color: #a8dba3; }
+.actions.tight { margin-top: 0; }
+
+/* Umsatz */
+.tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
+@media (max-width: 520px) { .tiles { grid-template-columns: 1fr 1fr; } .tiles .warn-tile { grid-column: 1 / -1; } }
+.tile { display: grid; gap: 3px; text-align: left; justify-content: stretch; align-items: start; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--ink); font-weight: 400; min-height: 0; }
+.tile span { color: var(--muted); font-size: 13px; text-transform: uppercase; letter-spacing: .06em; }
+.tile strong { font-family: var(--display); font-size: 26px; color: var(--gold); }
+.tile small { color: var(--muted); }
+.warn-tile strong { color: #f0b3a6; }
+.sales-row { width: 100%; background: none; border: 0; border-top: 1px solid var(--line); border-radius: 0; padding: 12px 0; color: var(--ink); text-align: left; font-weight: 400; min-height: 0; }
+.panel > h2 + .sales-row { border-top: 0; }
+button.sales-row:hover strong, .sales-row.current strong { color: var(--gold); }
+
+/* Update-Hinweis */
+#update-banner { position: fixed; z-index: 30; left: 12px; right: 12px; top: calc(10px + env(safe-area-inset-top)); display: flex; gap: 10px; align-items: center; justify-content: space-between; padding: 10px 12px; border-radius: 12px; background: var(--raise); border: 1px solid var(--gold); box-shadow: 0 8px 24px #000a; }
