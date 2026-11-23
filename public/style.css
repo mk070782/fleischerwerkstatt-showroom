@@ -213,5 +213,19 @@ button.sales-row:hover strong, .sales-row.current strong { color: var(--gold); }
 /* Update-Hinweis */
 #update-banner { position: fixed; z-index: 30; left: 12px; right: 12px; top: calc(10px + env(safe-area-inset-top)); display: flex; gap: 10px; align-items: center; justify-content: space-between; padding: 10px 12px; border-radius: 12px; background: var(--raise); border: 1px solid var(--gold); box-shadow: 0 8px 24px #000a; }
 
-/* Verwaltung am Handy: Abgleich und Einstellungen vor der langen Produktliste */
-@media (max-width: 899px) { .admin-layout > .stack { order: -1; } }
+/* Verwaltung mit Reitern */
+.tabs { position: sticky; top: 0; z-index: 6; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; padding: 4px; margin: 0 0 14px; background: #1d1812f2; border: 1px solid var(--line); border-radius: 12px; backdrop-filter: blur(6px); }
+@media (min-width: 900px) { .tabs { top: 62px; } }
+.tabs a { display: flex; align-items: center; justify-content: center; gap: 4px; min-height: 42px; padding: 6px 2px; border-radius: 9px; color: var(--muted); text-decoration: none; font-family: var(--display); text-transform: uppercase; letter-spacing: .03em; font-size: 14px; white-space: nowrap; }
+.tabs a[aria-current="page"] { background: var(--gold); color: var(--gold-ink); }
+.tabs small { font-family: system-ui, sans-serif; font-size: 11px; opacity: .75; }
+.tab-warn { color: #ff8c75; }
+.tabs a[aria-current="page"] .tab-warn { color: #7a1d0c; }
+.admin-body { display: grid; gap: 14px; max-width: 760px; }
+.group { margin: 18px 0 2px; color: var(--gold); font-family: var(--display); text-transform: uppercase; letter-spacing: .08em; font-size: 14px; }
+.group:first-child { margin-top: 0; }
+.group small { color: var(--muted); font-family: system-ui, sans-serif; letter-spacing: 0; }
+.group + .row { border-top: 0; }
+details.panel > summary { cursor: pointer; color: var(--ink); }
+details.panel > summary small { color: var(--muted); }
+details.panel[open] > summary { margin-bottom: 6px; }

@@ -8,7 +8,7 @@ import {
 } from './logic.mjs';
 
 /** Muss zu public/version.json passen (und VERSION in sw.js). */
-export const APP_VERSION = 7;
+export const APP_VERSION = 8;
 
 const state = {
   products: [],
@@ -440,90 +440,128 @@ function viewSales() {
     </div>`;
 }
 
-function viewAdmin() {
-  const s = state.settings;
+const ADMIN_TABS = [
+  ['produkte', 'Produkte'],
+  ['abgleich', 'Abgleich'],
+  ['texte', 'Nachricht'],
+  ['sicherung', 'Sicherung'],
+];
+
+function viewAdmin(tab) {
+  const t = ADMIN_TABS.some(([k]) => k === tab) ? tab : 'produkte';
+  const syncProblem = state.device.syncUrl && state.device.lastAuto?.ok === false;
+  const tabs = `<nav class="tabs" aria-label="Bereiche der Verwaltung">${ADMIN_TABS.map(([k, label]) => `<a href="#/verwaltung/${k}"${k === t ? ' aria-current="page"' : ''}>${label}${k === 'produkte' ? ` <small>${state.products.length}</small>` : ''}${k === 'abgleich' && syncProblem ? ' <b class="tab-warn">!</b>' : ''}</a>`).join('')}</nav>`;
+  const body = { produkte: adminProducts, abgleich: adminSync, texte: adminTexts, sicherung: adminBackup }[t]();
   return `
-    <div class="intro"><div><h1>Verwaltung</h1><p>Produkte, Texte und Datensicherung · App-Version ${APP_VERSION}</p></div>
-      <a class="button primary" href="#/produkt/neu">+ Produkt</a></div>
-    <div class="layout admin-layout">
-      <section class="panel">
-        <h2>Produkte (${state.products.length})</h2>
-        ${sortProducts(state.products).map((p) => `<a class="row link prod" href="#/produkt/${p.id}">
-          ${photoOrPlaceholder(p, 'thumb')}
-          <div><strong>${esc(p.name)}${p.active === false ? ' <span class="status s-storniert">ausgeblendet</span>' : ''}</strong><p class="hint">${esc(p.category)}${p.size ? ` · ${esc(p.size)}` : ''}</p></div>
-          <strong>${formatEuro(p.priceCents)}${p.unit === 'kg' ? '/kg' : ''}</strong></a>`).join('')}
-      </section>
-      <div class="stack">
-        ${viewSync()}
-        <form class="panel" id="settings-form">
-          <h2>Betrieb &amp; Nachricht</h2>
-          <label class="field">Name des Betriebs<input name="businessName" value="${esc(s.businessName)}"></label>
-          <label class="field">Untertitel<input name="subtitle" value="${esc(s.subtitle)}"></label>
-          <label class="field">Kontakt unter jeder Nachricht<textarea name="contact" rows="3" placeholder="Telefon, Adresse, Öffnungszeiten">${esc(s.contact)}</textarea></label>
-          <label class="field">Zahlungshinweis (steht unter dem Gesamtbetrag)<input name="paymentNote" value="${esc(s.paymentNote)}" placeholder="z. B. Bezahlung über PayPal an …"></label>
-          <label class="field">PayPal für Bezahl-Link (PayPal.me-Name oder E-Mail)<input name="paypal" autocapitalize="off" spellcheck="false" value="${esc(s.paypal)}" placeholder="z. B. MeinName oder name@example.de"></label>
-          <label class="field">Schlusssatz<input name="greeting" value="${esc(s.greeting)}"></label>
-          <label class="field">Ländervorwahl für Handynummern<input name="countryCode" inputmode="numeric" value="${esc(s.countryCode)}"></label>
-          <button class="primary" type="submit">Speichern</button>
-        </form>
-        <section class="panel">
-          <h2>Datensicherung</h2>
-          <p class="hint">Alle Daten liegen nur auf diesem Gerät. Regelmäßig eine Sicherung exportieren (z. B. in iCloud Drive oder per Mail an dich).</p>
-          <div class="actions">
-            <button data-action="backup-export">Sicherung exportieren</button>
-            <label class="button">Sicherung einspielen<input type="file" accept="application/json,.json" id="backup-import" hidden></label>
-          </div>
-          <details><summary>Weitere</summary>
-            <div class="actions">
-              <button data-action="load-test-customers">Testkunden laden</button>
-              <button data-action="reset-products">Startsortiment neu laden</button>
-              <button class="danger" data-action="wipe">Alle Daten löschen</button>
-            </div>
-          </details>
-        </section>
-      </div>
-    </div>`;
+    <div class="intro"><div><h1>Verwaltung</h1></div>${t === 'produkte' ? '<a class="button primary" href="#/produkt/neu">+ Produkt</a>' : ''}</div>
+    ${tabs}
+    <div class="admin-body">${body}</div>`;
 }
 
-function viewSync() {
+function adminProducts() {
+  const groups = new Map();
+  for (const p of sortProducts(state.products)) {
+    const cat = p.category || 'Ohne Kategorie';
+    if (!groups.has(cat)) groups.set(cat, []);
+    groups.get(cat).push(p);
+  }
+  if (!groups.size) return '<section class="panel"><p class="empty">Noch keine Produkte. Oben auf „+ Produkt“ tippen.</p></section>';
+  return `<section class="panel">${[...groups].map(([cat, list]) => `
+      <h3 class="group">${esc(cat)} <small>${list.length}</small></h3>
+      ${list.map((p) => `<a class="row link prod" href="#/produkt/${p.id}">
+        ${photoOrPlaceholder(p, 'thumb')}
+        <div><strong>${esc(p.name)}${p.active === false ? ' <span class="status s-storniert">ausgeblendet</span>' : ''}</strong><p class="hint">${p.unit === 'kg' ? 'pro kg' : esc(p.size || 'pro Stück')}</p></div>
+        <strong>${formatEuro(p.priceCents)}${p.unit === 'kg' ? '/kg' : ''}</strong></a>`).join('')}`).join('')}
+    </section>`;
+}
+
+function adminSync() {
   const prefix = state.device.prefix;
   const ls = state.lastSync;
   const dups = duplicateNumbers(state.orders);
   const time = (iso) => new Date(iso).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+  const connected = Boolean(state.device.syncUrl);
   return `
     <form class="panel sync" id="server-form">
       <h2>Automatischer Abgleich (Synology)</h2>
-      <p class="hint">Mit Adresse und Schlüssel gleicht die App von selbst ab: beim Öffnen, nach jeder Änderung und alle 5 Minuten. Ohne Netz arbeitet sie ganz normal weiter und holt den Abgleich später nach.</p>
-      <label class="field">Adresse des Servers (oder Einrichtungs-Link einfügen)<input name="syncUrl" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" value="${esc(state.device.syncUrl || '')}" placeholder="https://… oder Link"></label>
-      <label class="field">Schlüssel<input name="syncKey" type="password" autocomplete="off" value="${esc(state.device.syncKey || '')}"></label>
-      <div class="actions">
-        <button type="submit">Speichern</button>
-        ${state.device.syncUrl ? `<button type="button" class="primary" data-action="sync-now">Jetzt abgleichen</button>
-        <button type="button" data-action="share-connect">Link für den Bruder</button>
-        <button type="button" class="danger" data-action="sync-disconnect">Trennen</button>` : ''}
-      </div>
       <p class="hint" id="sync-status">${esc(syncStatusText())}</p>
+      ${connected ? `<div class="actions">
+        <button type="button" class="primary" data-action="sync-now">⟳ Jetzt abgleichen</button>
+        <button type="button" data-action="share-connect">Link für den Bruder</button>
+      </div>` : '<p class="hint">Noch nicht verbunden. Einrichtungs-Link unten einfügen und speichern.</p>'}
+      <details${connected ? '' : ' open'}><summary>${connected ? 'Verbindung ändern oder trennen' : 'Verbindung einrichten'}</summary>
+        <label class="field">Adresse des Servers (oder Einrichtungs-Link einfügen)<input name="syncUrl" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" value="${esc(state.device.syncUrl || '')}" placeholder="https://… oder Link"></label>
+        <label class="field">Schlüssel<input name="syncKey" type="password" autocomplete="off" value="${esc(state.device.syncKey || '')}"></label>
+        <div class="actions">
+          <button type="submit">Speichern</button>
+          ${connected ? '<button type="button" class="danger" data-action="sync-disconnect">Trennen</button>' : ''}
+        </div>
+      </details>
     </form>
-    <form class="panel sync" id="device-form">
-      <h2>Abgleich per Datei</h2>
-      <ol class="steps">
-        <li>Jeder trägt einmal sein eigenes Kürzel ein (z. B. <b>M</b> und <b>B</b>), dann gibt es keine doppelten Bestellnummern.</li>
-        <li><b>Abgleich senden</b> und die Datei per AirDrop, Nachrichten oder iCloud Drive an den anderen schicken.</li>
-        <li>Der andere tippt <b>Abgleich einspielen</b> und wählt die Datei. Neues kommt dazu, bei Änderungen gewinnt die neuere, Gelöschtes bleibt gelöscht.</li>
-        <li>Danach dasselbe in die andere Richtung, dann haben beide den gleichen Stand.</li>
-      </ol>
+    <form class="panel" id="device-form">
+      <h2>Dieses Handy</h2>
       <div class="two">
-        <label class="field">Kürzel dieses Handys<input name="prefix" maxlength="4" autocapitalize="characters" value="${esc(prefix)}" placeholder="z. B. M"></label>
+        <label class="field">Kürzel vor der Bestellnummer<input name="prefix" maxlength="4" autocapitalize="characters" value="${esc(prefix)}" placeholder="z. B. M"></label>
         <div class="field"><span>&nbsp;</span><button type="submit">Kürzel speichern</button></div>
       </div>
-      ${prefix ? `<p class="hint">Nächste Bestellnummer: ${esc(nextOrderNumber(state.orders, new Date(), prefix))}</p>` : '<p class="warn">Noch kein Kürzel, bitte zuerst eintragen.</p>'}
+      ${prefix ? `<p class="hint">Nächste Bestellnummer: ${esc(nextOrderNumber(state.orders, new Date(), prefix))}</p>` : '<p class="warn">Noch kein Kürzel, bitte eintragen (z. B. M). Jedes Handy bekommt ein eigenes.</p>'}
+      ${dups.length ? `<p class="warn">Doppelte Bestellnummern: ${dups.map(esc).join(', ')} (entstanden ohne Kürzel). Die Bestellungen sind trotzdem getrennt gespeichert.</p>` : ''}
+    </form>
+    <details class="panel">
+      <summary><strong>Abgleich per Datei</strong> <small>(Notlösung ohne Synology)</small></summary>
+      <ol class="steps">
+        <li><b>Abgleich senden</b> und die Datei per AirDrop, Nachrichten oder iCloud Drive an den anderen schicken.</li>
+        <li>Der andere tippt <b>Abgleich einspielen</b> und wählt die Datei. Neues kommt dazu, bei Änderungen gewinnt die neuere.</li>
+        <li>Danach dasselbe in die andere Richtung.</li>
+      </ol>
       <div class="actions">
-        <button type="button" class="primary" data-action="sync-send">Abgleich senden</button>
+        <button type="button" data-action="sync-send">Abgleich senden</button>
         <label class="button">Abgleich einspielen<input type="file" accept="application/json,.json" id="sync-import" hidden></label>
       </div>
       ${ls ? `<p class="hint">Zuletzt eingespielt: ${formatDate(ls.at)} ${time(ls.at)} von „${esc(ls.from)}“ · ${ls.added} neu, ${ls.updated} aktualisiert, ${ls.removed} gelöscht</p>` : ''}
-      ${dups.length ? `<p class="warn">Doppelte Bestellnummern: ${dups.map(esc).join(', ')} (entstanden ohne Kürzel). Die Bestellungen sind trotzdem getrennt gespeichert.</p>` : ''}
+    </details>`;
+}
+
+function adminTexts() {
+  const s = state.settings;
+  return `
+    <form class="panel" id="settings-form">
+      <h2>Betrieb</h2>
+      <label class="field">Name des Betriebs<input name="businessName" value="${esc(s.businessName)}"></label>
+      <label class="field">Untertitel<input name="subtitle" value="${esc(s.subtitle)}"></label>
+      <h2 class="gap">Bestellnachricht</h2>
+      <label class="field">Zahlungshinweis (steht unter dem Gesamtbetrag)<input name="paymentNote" value="${esc(s.paymentNote)}" placeholder="z. B. Bezahlung über PayPal an …"></label>
+      <label class="field">PayPal für Bezahl-Link (PayPal.me-Name oder E-Mail)<input name="paypal" autocapitalize="off" spellcheck="false" value="${esc(s.paypal)}" placeholder="z. B. MeinName oder name@example.de"></label>
+      <label class="field">Schlusssatz<input name="greeting" value="${esc(s.greeting)}"></label>
+      <label class="field">Kontakt unter jeder Nachricht<textarea name="contact" rows="3" placeholder="Telefon, Adresse, Öffnungszeiten">${esc(s.contact)}</textarea></label>
+      <label class="field">Ländervorwahl für Handynummern<input name="countryCode" inputmode="numeric" value="${esc(s.countryCode)}"></label>
+      <button class="primary wide" type="submit">Speichern</button>
     </form>`;
+}
+
+function adminBackup() {
+  return `
+    <section class="panel">
+      <h2>Datensicherung</h2>
+      <p class="hint">${state.device.syncUrl ? 'Deine Daten werden zusätzlich automatisch auf der Synology gesichert (jeden Tag eine Kopie).' : 'Alle Daten liegen nur auf diesem Gerät.'} Eine eigene Sicherungsdatei kannst du z. B. in iCloud Drive ablegen.</p>
+      <div class="actions">
+        <button data-action="backup-export">Sicherung exportieren</button>
+        <label class="button">Sicherung einspielen<input type="file" accept="application/json,.json" id="backup-import" hidden></label>
+      </div>
+    </section>
+    <section class="panel">
+      <h2>App</h2>
+      <p>Version <strong>${APP_VERSION}</strong></p>
+      <div class="actions"><button data-action="check-update">Auf Updates prüfen</button></div>
+    </section>
+    <details class="panel">
+      <summary><strong>Weitere Werkzeuge</strong></summary>
+      <div class="actions">
+        <button data-action="load-test-customers">Testkunden laden</button>
+        <button data-action="reset-products">Startsortiment neu laden</button>
+        <button class="danger" data-action="wipe">Alle Daten löschen</button>
+      </div>
+    </details>`;
 }
 
 function viewProduct(id) {
@@ -585,7 +623,7 @@ function route() {
     verlauf: viewOrders,
     umsatz: viewSales,
     auftrag: () => viewOrder(id),
-    verwaltung: viewAdmin,
+    verwaltung: () => viewAdmin(id),
     produkt: () => viewProduct(id),
   }[view];
   main.innerHTML = html ? html() : viewShowroom();
@@ -736,6 +774,11 @@ document.addEventListener('click', async (ev) => {
         break;
       }
       case 'app-update': await updateApp(); break;
+      case 'check-update':
+        lastUpdateCheck = 0;
+        await checkForUpdate();
+        if (!updateShown) toast(`Du hast die neueste Version (${APP_VERSION}).`);
+        break;
       case 'order-edit': {
         const o = order(id);
         if (state.draft.items.length && !confirm('Die angefangene Bestellung wird dabei verworfen. Weiter?')) break;
@@ -821,7 +864,7 @@ document.addEventListener('click', async (ev) => {
         const q = new URLSearchParams(location.hash.split('?')[1] || '');
         state.device = { ...state.device, syncUrl: q.get('u'), syncKey: q.get('k'), lastAuto: null };
         await db.setMeta('device', state.device);
-        history.replaceState(null, '', `${location.pathname}#/verwaltung`); // Schlüssel aus der Adresszeile entfernen
+        history.replaceState(null, '', `${location.pathname}#/verwaltung/abgleich`); // Schlüssel aus der Adresszeile entfernen
         route();
         await autoSync({ manual: true });
         break;
