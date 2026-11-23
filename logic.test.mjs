@@ -4,7 +4,7 @@ import {
   formatEuro, parseEuro, centsToInput, orderTotal, itemCount, addItem, setQty, nextOrderNumber,
   normalizePhone, orderMessage, whatsappLink, telegramLink, telegramChatLink, mailLink, matches,
   makeBackup, readBackup, sampleData, BACKUP_FORMAT, itemLine, cleanQty, startProducts, STARTSORTIMENT, mergeData, duplicateNumbers, migrateStartIds, startId, fillStartPhotos,
-  paypalLink, salesSummary, dayKey,
+  paypalLink, salesSummary, dayKey, firstName, orderSubject,
 } from './public/logic.mjs';
 
 test('Euro formatieren und einlesen', () => {
@@ -115,8 +115,9 @@ const order = {
 
 test('Bestelltext enthält Positionen, Gesamt, Abholung, Hinweis und Kontakt', () => {
   const text = orderMessage(order, { name: 'Max Mustermann' }, { contact: 'Tel. 06131 000000' });
-  assert.match(text, /^Hallo Max Mustermann,/);
-  assert.match(text, /AirKneipi Fleischerwerkstatt \(Nr\. 2026-0001 vom 22\.11\.2026\)/);
+  assert.match(text, /^Hallo Max,/);
+  assert.match(text, /hier Ihre Bestellung bei AirKneipi Fleischerwerkstatt vom 22\.11\.2026:/);
+  assert.ok(!text.includes('2026-0001') && !text.includes('Nr.'), 'keine Bestellnummer in der Nachricht');
   assert.match(text, /2 × Wildschwein-Bratwurst \(4 Stück\) à 7,00 € = 14,00 €/);
   assert.match(text, /1,5 kg Hirschgulasch à 18,00 €\/kg = 27,00 €/);
   assert.match(text, /Gesamt: 41,00 €/);
@@ -300,4 +301,26 @@ test('Umsatz: heute, Monat, unbezahlt, Monate und Tage, ohne Stornos', () => {
   assert.deepEqual(s.days('2026-11').map((d) => [d.key, d.total, d.count]), [['2026-11-23', 1500, 2], ['2026-11-20', 2000, 1]]);
   assert.equal(dayKey(at('2026-11-23')), '2026-11-23');
   assert.deepEqual(salesSummary([]).months, []);
+});
+
+test('Anrede mit Vornamen, eigener Vorname, Sie/Du', () => {
+  assert.equal(firstName({ name: 'Max Mustermann' }), 'Max');
+  assert.equal(firstName({ name: '  Mona Von Gemünden ' }), 'Mona');
+  assert.equal(firstName({ name: 'Frau Lina Kneip' }), 'Lina');
+  assert.equal(firstName({ name: 'Jöst Oliver', salutation: 'Oliver' }), 'Oliver');
+  assert.equal(firstName({ name: 'Herr' }), 'Herr');
+  assert.equal(firstName(null), '');
+  const o = { number: 'M-2026-0001', createdAt: '2026-11-22T10:00:00.000Z', items: [{ name: 'X', unit: 'Stück', priceCents: 800, qty: 1 }] };
+  const sie = orderMessage(o, { name: 'Max Mustermann' }, {});
+  assert.match(sie, /^Hallo Max,\n\nhier Ihre Bestellung/);
+  assert.match(sie, /Vielen Dank für Ihre Bestellung!/);
+  const du = orderMessage(o, { name: 'Max Mustermann' }, { tone: 'du' });
+  assert.match(du, /^Hallo Max,\n\nhier deine Bestellung/);
+  assert.match(du, /Vielen Dank für deine Bestellung!/);
+  assert.match(orderMessage(o, { name: 'Max' }, { tone: 'du', greeting: 'Bis Samstag!' }), /Bis Samstag!/);
+  assert.equal(orderSubject(o, { tone: 'du' }), 'Deine Bestellung bei AirKneipi Fleischerwerkstatt vom 22.11.2026');
+  assert.equal(orderSubject(o, {}), 'Ihre Bestellung bei AirKneipi Fleischerwerkstatt vom 22.11.2026');
+  // PayPal-Seite zeigt dem Kunden das Datum statt der Bestellnummer
+  const pay = orderMessage(o, { name: 'Max' }, { paypal: 'kasse@example.com' }).split('\n').find((l) => l.startsWith('Jetzt bezahlen'));
+  assert.equal(new URL(pay.slice('Jetzt bezahlen: '.length)).searchParams.get('item_name'), 'Bestellung vom 22.11.2026');
 });

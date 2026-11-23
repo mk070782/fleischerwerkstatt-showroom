@@ -17,6 +17,7 @@ export const DEFAULT_SETTINGS = {
   paymentNote: '', // z. B. „Bezahlung über PayPal an …“ – steht direkt unter dem Gesamtbetrag
   paypal: '', // PayPal.me-Name/-Link oder E-Mail: daraus wird ein Bezahl-Link mit fertigem Betrag
   orderPrefix: '',
+  tone: 'sie', // Ansprache in der Nachricht: 'sie' oder 'du'
 };
 
 const euro = new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' });
@@ -207,14 +208,30 @@ export function formatDate(iso) {
 }
 
 /** Der Bestelltext, der per WhatsApp, Telegram oder Mail verschickt wird. */
+/**
+ * Vorname für die Anrede: eigenes Feld „salutation“ beim Kunden, sonst das erste Wort des Namens
+ * (ohne Herr/Frau/Dr.). „Max Mustermann“ → „Max“.
+ */
+export function firstName(customer) {
+  const own = String(customer?.salutation ?? '').trim();
+  if (own) return own;
+  const words = String(customer?.name ?? '').trim().split(/\s+/).filter(Boolean);
+  while (words.length > 1 && /^(herr|frau|dr\.?|prof\.?)$/i.test(words[0])) words.shift();
+  return words[0] || '';
+}
+
+const GREETING_SIE = 'Vielen Dank für Ihre Bestellung!';
+const GREETING_DU = 'Vielen Dank für deine Bestellung!';
+
 export function orderMessage(order, customer, settings = DEFAULT_SETTINGS) {
   const s = { ...DEFAULT_SETTINGS, ...settings };
+  const du = s.tone === 'du';
   const lines = [];
-  const name = customer?.name?.trim();
+  const name = firstName(customer);
   lines.push(name ? `Hallo ${name},` : 'Hallo,');
   lines.push('');
   const when = formatDate(order.createdAt);
-  lines.push(`hier Ihre Bestellung bei ${s.businessName}${order.number ? ` (Nr. ${order.number}${when ? ` vom ${when}` : ''})` : ''}:`);
+  lines.push(`hier ${du ? 'deine' : 'Ihre'} Bestellung bei ${s.businessName}${when ? ` vom ${when}` : ''}:`);
   lines.push('');
   for (const item of order.items || []) {
     lines.push(itemLine(item));
@@ -225,14 +242,15 @@ export function orderMessage(order, customer, settings = DEFAULT_SETTINGS) {
     lines.push('Bereits bezahlt – vielen Dank!');
   } else {
     if (s.paymentNote?.trim()) lines.push(s.paymentNote.trim());
-    const pay = paypalLink(s.paypal, orderTotal(order.items), order.number);
+    const pay = paypalLink(s.paypal, orderTotal(order.items), payReference(order));
     if (pay) lines.push(`Jetzt bezahlen: ${pay}`);
   }
   if (order.pickupDate) lines.push(`Abholung: ${formatDate(order.pickupDate)}`);
   if (order.note?.trim()) lines.push(`Hinweis: ${order.note.trim()}`);
   if (s.greeting?.trim()) {
     lines.push('');
-    lines.push(s.greeting.trim());
+    // der voreingestellte Schlusssatz passt sich der Ansprache an, ein eigener Text bleibt wie er ist
+    lines.push(du && s.greeting.trim() === GREETING_SIE ? GREETING_DU : s.greeting.trim());
   }
   if (s.contact?.trim()) {
     lines.push('');
@@ -244,7 +262,14 @@ export function orderMessage(order, customer, settings = DEFAULT_SETTINGS) {
 
 export function orderSubject(order, settings = DEFAULT_SETTINGS) {
   const s = { ...DEFAULT_SETTINGS, ...settings };
-  return `Ihre Bestellung bei ${s.businessName}${order.number ? ` – Nr. ${order.number}` : ''}`;
+  const when = formatDate(order.createdAt);
+  return `${s.tone === 'du' ? 'Deine' : 'Ihre'} Bestellung bei ${s.businessName}${when ? ` vom ${when}` : ''}`;
+}
+
+/** Verwendungszweck auf der PayPal-Seite: Datum statt Bestellnummer („Bestellung vom 22.11.2026“). */
+export function payReference(order) {
+  const when = formatDate(order.createdAt);
+  return when ? `vom ${when}` : '';
 }
 
 export function whatsappLink(phone, text, countryCode = '49') {

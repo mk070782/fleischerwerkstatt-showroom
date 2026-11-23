@@ -4,11 +4,11 @@ import {
   cleanQty, lineTotal, orderTotal, itemCount, addItem, setQty, nextOrderNumber, normalizePhone, formatDate,
   orderMessage, orderSubject, whatsappLink, telegramLink, telegramChatLink, mailLink, matches,
   makeBackup, readBackup, newId, startProducts, sampleCustomers, mergeData, duplicateNumbers, migrateStartIds, fillStartPhotos,
-  paypalLink, salesSummary, monthLabel, monthKey,
+  paypalLink, salesSummary, monthLabel, monthKey, firstName, payReference,
 } from './logic.mjs';
 
 /** Muss zu public/version.json passen (und VERSION in sw.js). */
-export const APP_VERSION = 8;
+export const APP_VERSION = 9;
 
 const state = {
   products: [],
@@ -323,6 +323,8 @@ function viewCustomer(id) {
     <div class="layout">
       <form class="panel" id="customer-form" data-id="${isNew ? '' : id}">
         <label class="field">Name *<input name="name" required value="${esc(c.name)}" autocomplete="off"></label>
+        <label class="field">Vorname für Nachrichten<input name="salutation" value="${esc(c.salutation || '')}" placeholder="automatisch: ${esc(firstName(c) || 'erstes Wort des Namens')}" autocomplete="off"></label>
+        <p class="hint">Nur ausfüllen, wenn der Vorname nicht vorne steht (z. B. „Jöst Oliver“ → Oliver).</p>
         <label class="field">Telefon / WhatsApp<input name="phone" type="tel" value="${esc(c.phone)}" placeholder="0171 1234567"></label>
         <label class="field">E-Mail<input name="email" type="email" value="${esc(c.email)}"></label>
         <label class="field">Telegram-Name<input name="telegram" value="${esc(c.telegram)}" placeholder="@name (optional)"></label>
@@ -400,7 +402,7 @@ function viewOrder(id) {
           <a class="button mail ${c?.email ? '' : 'off'}" ${c?.email ? `href="${esc(mailLink(c.email, orderSubject(o, state.settings), text))}"` : 'aria-disabled="true"'} data-action="sent" data-via="E-Mail" data-id="${o.id}">E-Mail</a>
           ${navigator.share ? `<button data-action="share" data-id="${o.id}">Teilen …</button>` : ''}
           <button data-action="copy" data-id="${o.id}">Text kopieren</button>
-          ${!o.paid && paypalLink(state.settings.paypal, orderTotal(o.items), o.number) ? `<button data-action="copy-paylink" data-id="${o.id}">PayPal-Link kopieren</button>` : ''}
+          ${!o.paid && paypalLink(state.settings.paypal, orderTotal(o.items), payReference(o)) ? `<button data-action="copy-paylink" data-id="${o.id}">PayPal-Link kopieren</button>` : ''}
         </div>
         ${!o.paid && !state.settings.paypal ? '<p class="hint">Tipp: Unter Verwaltung → „PayPal für Bezahl-Link“ eintragen, dann steht ein PayPal-Link mit dem fertigen Betrag in jeder Nachricht.</p>' : ''}
         ${!phone ? `<p class="hint">WhatsApp: beim Kunden fehlt die Telefonnummer.</p>` : ''}
@@ -530,6 +532,10 @@ function adminTexts() {
       <label class="field">Name des Betriebs<input name="businessName" value="${esc(s.businessName)}"></label>
       <label class="field">Untertitel<input name="subtitle" value="${esc(s.subtitle)}"></label>
       <h2 class="gap">Bestellnachricht</h2>
+      <label class="field">Ansprache in der Nachricht<select name="tone">
+        <option value="sie" ${s.tone !== 'du' ? 'selected' : ''}>Sie („hier Ihre Bestellung …“)</option>
+        <option value="du" ${s.tone === 'du' ? 'selected' : ''}>Du („hier deine Bestellung …“)</option></select></label>
+      <p class="hint">Begrüßt wird immer mit Vornamen: „Hallo Max,“.</p>
       <label class="field">Zahlungshinweis (steht unter dem Gesamtbetrag)<input name="paymentNote" value="${esc(s.paymentNote)}" placeholder="z. B. Bezahlung über PayPal an …"></label>
       <label class="field">PayPal für Bezahl-Link (PayPal.me-Name oder E-Mail)<input name="paypal" autocapitalize="off" spellcheck="false" value="${esc(s.paypal)}" placeholder="z. B. MeinName oder name@example.de"></label>
       <label class="field">Schlusssatz<input name="greeting" value="${esc(s.greeting)}"></label>
@@ -769,7 +775,7 @@ document.addEventListener('click', async (ev) => {
       }
       case 'copy-paylink': {
         const o = order(id);
-        await navigator.clipboard.writeText(paypalLink(state.settings.paypal, orderTotal(o.items), o.number));
+        await navigator.clipboard.writeText(paypalLink(state.settings.paypal, orderTotal(o.items), payReference(o)));
         toast('PayPal-Link kopiert');
         break;
       }
@@ -971,7 +977,7 @@ document.addEventListener('submit', async (ev) => {
   try {
     if (form.id === 'customer-form') {
       const id = form.dataset.id;
-      const c = { ...(id ? customer(id) : { id: newId() }), name: f.name.trim(), phone: f.phone.trim(), email: f.email.trim(), telegram: f.telegram.trim(), address: f.address.trim(), notes: f.notes.trim(), updatedAt: now() };
+      const c = { ...(id ? customer(id) : { id: newId() }), name: f.name.trim(), phone: f.phone.trim(), email: f.email.trim(), telegram: f.telegram.trim(), address: f.address.trim(), notes: f.notes.trim(), salutation: String(f.salutation || '').trim(), updatedAt: now() };
       if (!c.name) return toast('Bitte einen Namen eingeben.');
       await db.put('customers', c);
       state.customers = [...state.customers.filter((x) => x.id !== c.id), c];
