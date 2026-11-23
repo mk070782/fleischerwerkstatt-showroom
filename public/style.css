@@ -178,12 +178,15 @@ summary { cursor: pointer; color: var(--muted); }
 .steps { margin: 6px 0 4px; padding-left: 20px; color: var(--muted); font-size: 14px; display: grid; gap: 4px; }
 .steps b { color: var(--ink); }
 .warn { margin-top: 8px; padding: 8px 10px; border-radius: 8px; background: #4a3a14; color: #f3d27f; font-size: 14px; }
-#sync-dot { width: 12px; height: 12px; border-radius: 50%; flex: none; margin-left: auto; background: #3a3024; }
+/* Abgleich-Knopf oben rechts: Farbe = Zustand, Antippen = jetzt abgleichen */
+#sync-dot { width: 40px; height: 40px; min-height: 40px; padding: 0; flex: none; margin-left: auto; border-radius: 50%; border: 2px solid var(--green); background: #16251a; color: var(--green); font-size: 22px; line-height: 1; }
+#sync-dot span { display: block; }
 .cart-chip:not([hidden]) + #sync-dot { margin-left: 0; }
 #sync-dot[data-state="off"] { display: none; }
-#sync-dot[data-state="ok"] { background: var(--green); }
-#sync-dot[data-state="busy"] { background: var(--gold); animation: pulse 1s infinite alternate; }
-#sync-dot[data-state="error"] { background: var(--red); }
+#sync-dot[data-state="busy"] { border-color: var(--gold); color: var(--gold); background: #2a2210; }
+#sync-dot[data-state="busy"] span { animation: spin 1s linear infinite; }
+#sync-dot[data-state="error"] { border-color: var(--red); color: #ffb4a6; background: #2e1712; }
+@keyframes spin { to { transform: rotate(360deg); } }
 @keyframes pulse { to { opacity: .35; } }
 
 /* Bezahlt / unbezahlt */
@@ -209,3 +212,6 @@ button.sales-row:hover strong, .sales-row.current strong { color: var(--gold); }
 
 /* Update-Hinweis */
 #update-banner { position: fixed; z-index: 30; left: 12px; right: 12px; top: calc(10px + env(safe-area-inset-top)); display: flex; gap: 10px; align-items: center; justify-content: space-between; padding: 10px 12px; border-radius: 12px; background: var(--raise); border: 1px solid var(--gold); box-shadow: 0 8px 24px #000a; }
+
+/* Verwaltung am Handy: Abgleich und Einstellungen vor der langen Produktliste */
+@media (max-width: 899px) { .admin-layout > .stack { order: -1; } }

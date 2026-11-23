@@ -8,7 +8,7 @@ import {
 } from './logic.mjs';
 
 /** Muss zu public/version.json passen (und VERSION in sw.js). */
-export const APP_VERSION = 6;
+export const APP_VERSION = 7;
 
 const state = {
   products: [],
@@ -445,7 +445,7 @@ function viewAdmin() {
   return `
     <div class="intro"><div><h1>Verwaltung</h1><p>Produkte, Texte und Datensicherung · App-Version ${APP_VERSION}</p></div>
       <a class="button primary" href="#/produkt/neu">+ Produkt</a></div>
-    <div class="layout">
+    <div class="layout admin-layout">
       <section class="panel">
         <h2>Produkte (${state.products.length})</h2>
         ${sortProducts(state.products).map((p) => `<a class="row link prod" href="#/produkt/${p.id}">
@@ -491,6 +491,19 @@ function viewSync() {
   const dups = duplicateNumbers(state.orders);
   const time = (iso) => new Date(iso).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
   return `
+    <form class="panel sync" id="server-form">
+      <h2>Automatischer Abgleich (Synology)</h2>
+      <p class="hint">Mit Adresse und Schlüssel gleicht die App von selbst ab: beim Öffnen, nach jeder Änderung und alle 5 Minuten. Ohne Netz arbeitet sie ganz normal weiter und holt den Abgleich später nach.</p>
+      <label class="field">Adresse des Servers (oder Einrichtungs-Link einfügen)<input name="syncUrl" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" value="${esc(state.device.syncUrl || '')}" placeholder="https://… oder Link"></label>
+      <label class="field">Schlüssel<input name="syncKey" type="password" autocomplete="off" value="${esc(state.device.syncKey || '')}"></label>
+      <div class="actions">
+        <button type="submit">Speichern</button>
+        ${state.device.syncUrl ? `<button type="button" class="primary" data-action="sync-now">Jetzt abgleichen</button>
+        <button type="button" data-action="share-connect">Link für den Bruder</button>
+        <button type="button" class="danger" data-action="sync-disconnect">Trennen</button>` : ''}
+      </div>
+      <p class="hint" id="sync-status">${esc(syncStatusText())}</p>
+    </form>
     <form class="panel sync" id="device-form">
       <h2>Abgleich per Datei</h2>
       <ol class="steps">
@@ -510,19 +523,6 @@ function viewSync() {
       </div>
       ${ls ? `<p class="hint">Zuletzt eingespielt: ${formatDate(ls.at)} ${time(ls.at)} von „${esc(ls.from)}“ · ${ls.added} neu, ${ls.updated} aktualisiert, ${ls.removed} gelöscht</p>` : ''}
       ${dups.length ? `<p class="warn">Doppelte Bestellnummern: ${dups.map(esc).join(', ')} (entstanden ohne Kürzel). Die Bestellungen sind trotzdem getrennt gespeichert.</p>` : ''}
-    </form>
-    <form class="panel sync" id="server-form">
-      <h2>Automatischer Abgleich (Synology)</h2>
-      <p class="hint">Mit Adresse und Schlüssel gleicht die App von selbst ab: beim Öffnen, nach jeder Änderung und alle 5 Minuten. Ohne Netz arbeitet sie ganz normal weiter und holt den Abgleich später nach.</p>
-      <label class="field">Adresse des Servers (oder Einrichtungs-Link einfügen)<input name="syncUrl" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" value="${esc(state.device.syncUrl || '')}" placeholder="https://… oder Link"></label>
-      <label class="field">Schlüssel<input name="syncKey" type="password" autocomplete="off" value="${esc(state.device.syncKey || '')}"></label>
-      <div class="actions">
-        <button type="submit">Speichern</button>
-        ${state.device.syncUrl ? `<button type="button" class="primary" data-action="sync-now">Jetzt abgleichen</button>
-        <button type="button" data-action="share-connect">Link für den Bruder</button>
-        <button type="button" class="danger" data-action="sync-disconnect">Trennen</button>` : ''}
-      </div>
-      <p class="hint" id="sync-status">${esc(syncStatusText())}</p>
     </form>`;
 }
 
